@@ -4,7 +4,12 @@ import { showErrorSync } from '@renderer/utils/error-display'
 import SettingCard from '@renderer/components/base/base-setting-card'
 import SettingItem from '@renderer/components/base/base-setting-item'
 import { useControledMihomoConfig } from '@renderer/hooks/use-controled-mihomo-config'
-import { grantTunPermissions, restartCore, setupFirewall } from '@renderer/utils/ipc'
+import {
+  grantTunPermissions,
+  mihomoHotReloadConfig,
+  restartCore,
+  setupFirewall
+} from '@renderer/utils/ipc'
 import { platform } from '@renderer/utils/init'
 import React, { Key, useState } from 'react'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
@@ -63,8 +68,14 @@ const Tun: React.FC = () => {
   }
 
   const onSave = async (patch: Partial<IMihomoConfig>): Promise<void> => {
-    await patchControledMihomoConfig(patch)
-    setChanged(false)
+    try {
+      await patchControledMihomoConfig(patch)
+      await mihomoHotReloadConfig()
+    } catch (e) {
+      showErrorSync(e, t('common.error.configSaveFailed'))
+    } finally {
+      setChanged(false)
+    }
   }
 
   return (
