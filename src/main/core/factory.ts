@@ -67,7 +67,7 @@ function processRulesWithOffset(ruleStrings: string[], currentRules: string[], i
  *
  * @param profile 当前的 Mihomo 配置对象
  * @param enabled 是否需要执行排除逻辑（通常为是否启用了 Smart 核心覆写）
- * @returns 此次新添加到排除列表中的网段/IP数组
+ * @returns 此次新添加到排除列表中的网段/IP 数组
  */
 function ensureSmartProxyServerTunExclude(profile: IMihomoConfig, enabled: boolean): string[] {
   if (!enabled || profile.tun?.enable !== true || !Array.isArray(profile.proxies)) return []
