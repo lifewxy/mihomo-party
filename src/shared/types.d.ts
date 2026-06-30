@@ -339,6 +339,7 @@ interface IAppConfig {
   siderOrder: string[]
   lastSelectedSiderCard?: SiderCardKey
   rememberSelectedSiderCard?: boolean
+  lockSiderCards?: boolean
   siderWidth: number
   appTheme: AppTheme
   customTheme?: string

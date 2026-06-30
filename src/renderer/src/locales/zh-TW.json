@@ -118,6 +118,7 @@
   "settings.showDockIcon": "顯示 Dock 圖標",
   "settings.useWindowFrame": "使用系統標題欄",
   "settings.rememberSelectedSiderCard": "記住已選側邊卡片",
+  "settings.lockSiderCards": "鎖定側邊卡片位置",
   "settings.triggerMainWindowBehavior": "托盤窗口觸發行為",
   "settings.triggerMainWindowBehaviorShow": "總是顯示",
   "settings.triggerMainWindowBehaviorToggle": "切換顯示/隱藏",

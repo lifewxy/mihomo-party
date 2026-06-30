@@ -13,7 +13,9 @@ import {
   PointerSensor,
   useSensor,
   useSensors,
-  DragEndEvent
+  DragEndEvent,
+  Modifier,
+  CollisionDetection
 } from '@dnd-kit/core'
 import { SortableContext } from '@dnd-kit/sortable'
 import ProfileCard from '@renderer/components/sider/profile-card'
@@ -58,7 +60,8 @@ const App: React.FC = () => {
     siderWidth = 250,
     siderOrder = DEFAULT_SIDER_ORDER,
     lastSelectedSiderCard = 'proxy',
-    rememberSelectedSiderCard = false
+    rememberSelectedSiderCard = false,
+    lockSiderCards = false
   } = appConfig || {}
   useTrafficLogger(enableTrafficLogger)
   const narrowWidth = platform === 'darwin' ? 70 : 60
@@ -146,7 +149,7 @@ const App: React.FC = () => {
   const onDragEnd = async (event: DragEndEvent): Promise<void> => {
     const { active, over } = event
     const activeId = active.id as SiderCardKey
-    if (over) {
+    if (over && !lockSiderCards) {
       if (active.id !== over.id) {
         const overId = over.id as SiderCardKey
         const newOrder = order.slice()
@@ -162,6 +165,16 @@ const App: React.FC = () => {
     }
     const dest = SIDER_CARD_ROUTES[activeId]
     if (dest) navigate(dest)
+  }
+
+  const lockTransform: Modifier = (args) => {
+    if (lockSiderCards) return { ...args.transform, x: 0, y: 0 }
+    return args.transform
+  }
+
+  const collisionDetection: CollisionDetection = (args) => {
+    if (lockSiderCards) return []
+    return closestCorners(args)
   }
 
   const componentMap: Record<SiderCardKey, React.FC<{ iconOnly?: boolean }>> = {
@@ -259,7 +272,12 @@ const App: React.FC = () => {
             <OutboundModeSwitcher />
           </div>
           <div style={{ overflowX: 'clip' }}>
-            <DndContext sensors={sensors} collisionDetection={closestCorners} onDragEnd={onDragEnd}>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={collisionDetection}
+              onDragEnd={onDragEnd}
+              modifiers={[lockTransform]}
+            >
               <div className="grid grid-cols-2 gap-2 m-2">
                 <SortableContext items={order}>
                   {order.map((key) => {

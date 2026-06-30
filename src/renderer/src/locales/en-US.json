@@ -118,6 +118,7 @@
   "settings.showDockIcon": "Show Dock Icon",
   "settings.useWindowFrame": "Use System Title Bar",
   "settings.rememberSelectedSiderCard": "Remember Selected Sidebar Card",
+  "settings.lockSiderCards": "Lock Sidebar Card Positions",
   "settings.triggerMainWindowBehavior": "Tray Window Trigger Behavior",
   "settings.triggerMainWindowBehaviorShow": "Always Show",
   "settings.triggerMainWindowBehaviorToggle": "Toggle Show/Hide",
