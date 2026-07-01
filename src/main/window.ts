@@ -18,37 +18,108 @@ interface WindowState {
   isMaximized?: boolean
 }
 
+const WINDOW_STATE_SAVE_DELAY = 100
+
+// 内存态，最大化期间保留上次普通尺寸（#1954）。
+let windowState: WindowState = { width: 800, height: 600 }
+let saveStateTimer: NodeJS.Timeout | null = null
+
+function windowStateFile(): string {
+  return join(dataDir(), 'window-state.json')
+}
+
+// 拒绝 NaN/Infinity/0/负/小数；坐标副屏可为负。
+function isValidSize(n: unknown): n is number {
+  return typeof n === 'number' && Number.isInteger(n) && n > 0
+}
+
+function isValidCoord(n: unknown): n is number {
+  return typeof n === 'number' && Number.isInteger(n)
+}
+
 function loadWindowState(): WindowState {
   try {
-    const raw = readFileSync(join(dataDir(), 'window-state.json'), 'utf-8')
-    return JSON.parse(raw)
+    const parsed = JSON.parse(readFileSync(windowStateFile(), 'utf-8')) as Partial<WindowState>
+    if (isValidSize(parsed.width) && isValidSize(parsed.height)) {
+      return {
+        width: parsed.width,
+        height: parsed.height,
+        x: isValidCoord(parsed.x) ? parsed.x : undefined,
+        y: isValidCoord(parsed.y) ? parsed.y : undefined,
+        isMaximized: parsed.isMaximized === true
+      }
+    }
   } catch {
-    return { width: 800, height: 600 }
+    // 缺失/损坏，回退默认
+  }
+  return { width: 800, height: 600 }
+}
+
+function isNormalWindow(window: BrowserWindow): boolean {
+  return !window.isMaximized() && !window.isMinimized() && !window.isFullScreen()
+}
+
+// getContentBounds（非 getBounds）避免 Windows 小数 DPI 每次重启变大（#1857）。
+// trackBounds=false 只记最大化标志，因 unmaximize 时尺寸未稳定会返回满屏值（#1954）。
+function updateWindowState(window: BrowserWindow, trackBounds = true): void {
+  if (window.isDestroyed()) return
+  try {
+    if (trackBounds && isNormalWindow(window)) {
+      const bounds = window.getContentBounds()
+      windowState.width = bounds.width
+      windowState.height = bounds.height
+      windowState.x = bounds.x
+      windowState.y = bounds.y
+    }
+    windowState.isMaximized = window.isMaximized()
+  } catch {
+    // 窗口销毁中
   }
 }
 
+function persistWindowState(): void {
+  try {
+    writeFileSync(windowStateFile(), JSON.stringify(windowState))
+  } catch {
+    // 忽略
+  }
+}
+
+function clearSaveStateTimer(): void {
+  if (saveStateTimer) {
+    clearTimeout(saveStateTimer)
+    saveStateTimer = null
+  }
+}
+
+// 同步兜底，用于关窗/退出（Wayland 可能不触发 resize）。
 function saveWindowState(window: BrowserWindow): void {
-  const isMaximized = window.isMaximized()
-  const state: WindowState = isMaximized
-    ? { ...loadWindowState(), isMaximized: true }
-    : { ...window.getContentBounds(), isMaximized: false }
-  writeFileSync(join(dataDir(), 'window-state.json'), JSON.stringify(state))
+  clearSaveStateTimer()
+  updateWindowState(window)
+  persistWindowState()
+}
+
+// 防抖，用于 resize/move/maximize/unmaximize。
+function scheduleSaveWindowState(window: BrowserWindow, trackBounds = true): void {
+  clearSaveStateTimer()
+  saveStateTimer = setTimeout(() => {
+    saveStateTimer = null
+    if (window.isDestroyed()) return // 崩溃重建后旧回调
+    updateWindowState(window, trackBounds)
+    persistWindowState()
+  }, WINDOW_STATE_SAVE_DELAY)
 }
 
 function ensureVisibleOnScreen(state: WindowState): WindowState {
-  const displays = screen.getAllDisplays()
-  const visible = displays.some((d) => {
+  const { x, y } = state
+  if (x === undefined || y === undefined) return state
+  const visible = screen.getAllDisplays().some((d) => {
     const b = d.bounds
-    return (
-      state.x !== undefined &&
-      state.y !== undefined &&
-      state.x >= b.x &&
-      state.y >= b.y &&
-      state.x < b.x + b.width &&
-      state.y < b.y + b.height
-    )
+    return x >= b.x && y >= b.y && x < b.x + b.width && y < b.y + b.height
   })
-  return visible ? state : { width: state.width, height: state.height }
+  if (visible) return state
+  // 屏外：丢坐标居中，留尺寸/最大化。
+  return { width: state.width, height: state.height, isMaximized: state.isMaximized }
 }
 
 export let mainWindow: BrowserWindow | null = null
@@ -80,7 +151,8 @@ async function createWindowInternal(): Promise<void> {
     autoQuitWithoutCoreMode = 'core'
   } = await getAppConfig()
 
-  const savedState = ensureVisibleOnScreen(loadWindowState())
+  windowState = ensureVisibleOnScreen(loadWindowState())
+  const savedState = windowState
 
   Menu.setApplicationMenu(null)
   mainWindow = new BrowserWindow({
@@ -205,6 +277,8 @@ function setupWindowEvents(window: BrowserWindow, config: WindowConfig): void {
   })
 
   window.on('close', async (event) => {
+    saveWindowState(window) // 关窗前兜底（#1954）
+
     event.preventDefault()
     window.hide()
 
@@ -225,17 +299,20 @@ function setupWindowEvents(window: BrowserWindow, config: WindowConfig): void {
   })
 
   window.on('closed', () => {
+    clearSaveStateTimer()
     if (mainWindow === window) {
       mainWindow = null
     }
   })
 
-  window.on('resized', () => saveWindowState(window))
-  window.on('moved', () => saveWindowState(window))
-  window.on('maximize', () => saveWindowState(window))
-  window.on('unmaximize', () => saveWindowState(window))
+  // resize/move（非 resized/moved，Wayland 常不触发）+ 防抖（#1954）
+  window.on('resize', () => scheduleSaveWindowState(window))
+  window.on('move', () => scheduleSaveWindowState(window))
+  window.on('maximize', () => scheduleSaveWindowState(window, false))
+  window.on('unmaximize', () => scheduleSaveWindowState(window, false))
 
   window.on('session-end', async () => {
+    saveWindowState(window)
     await triggerSysProxy(false)
     await stopCore()
   })
