@@ -224,7 +224,9 @@ export async function removeProfileItem(id: string): Promise<void> {
   await removeProfileUpdater(id)
 
   let shouldRestart = false
+  let removedItem: IProfileItem | undefined
   await updateProfileConfig((config) => {
+    removedItem = config.items?.find((item) => item.id === id)
     config.items = config.items?.filter((item) => item.id !== id)
     if (config.current === id) {
       shouldRestart = true
@@ -240,6 +242,18 @@ export async function removeProfileItem(id: string): Promise<void> {
     await restartCore()
   }
   await removeProfileWorkDir(id)
+
+  if (removedItem?.type === 'plugin' && removedItem.pluginId) {
+    const { removePluginItem } = await import('./plugin')
+    const { removeVault } = await import('../resolve/plugin/vault')
+    const { revokePluginDevice } = await import('../resolve/plugin')
+    const { mainWindow } = await import('../window')
+    // best-effort 通知服务端解绑设备（需 vault，故在 removeVault 之前）；失败不阻塞删除
+    await revokePluginDevice(removedItem.pluginId)
+    await removePluginItem(removedItem.pluginId)
+    await removeVault(removedItem.pluginId)
+    mainWindow?.webContents.send('pluginConfigUpdated')
+  }
 }
 
 export async function getCurrentProfileItem(): Promise<IProfileItem> {
@@ -681,4 +695,47 @@ export async function convertMrsRuleset(filePath: string, behavior: string): Pro
     }
     throw error
   }
+}
+
+// 插件 profile：内容已由 plugin 网关取得，这里只写内容 + 维护 profile item，不走远程 URL 下载
+export async function upsertPluginProfile(
+  meta: {
+    profileId: string
+    pluginId: string
+    name: string
+    interval?: number
+    autoUpdate?: boolean
+  },
+  content: string
+): Promise<void> {
+  await setProfileStr(meta.profileId, content)
+  let isNew = false
+  await updateProfileConfig((config) => {
+    const idx = config.items.findIndex((i) => i.id === meta.profileId)
+    const item: IProfileItem = {
+      id: meta.profileId,
+      type: 'plugin',
+      name: meta.name,
+      pluginId: meta.pluginId,
+      interval: meta.interval ?? 0,
+      autoUpdate: meta.autoUpdate ?? false,
+      updated: Date.now()
+    }
+    if (idx === -1) {
+      isNew = true
+      config.items.push(item)
+    } else {
+      config.items[idx] = { ...config.items[idx], ...item }
+    }
+    if (!config.current) config.current = meta.profileId
+    return config
+  })
+  if (isNew) {
+    const created = await getProfileItem(meta.profileId)
+    if (created) await addProfileUpdater(created)
+  }
+}
+
+export async function removePluginProfileContent(profileId: string): Promise<void> {
+  await removeProfileItem(profileId)
 }

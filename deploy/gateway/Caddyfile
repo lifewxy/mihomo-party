@@ -1,0 +1,8 @@
+# Caddy obtains and renews a Let's Encrypt certificate for {$DOMAIN} automatically.
+# It terminates TLS and reverse-proxies to the gateway container on the internal network.
+# To receive cert-expiry notices, add a global block above:  { email you@example.com }
+
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy gateway:8080
+}

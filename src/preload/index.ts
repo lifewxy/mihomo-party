@@ -145,6 +145,13 @@ const validInvokeChannels = [
   'quitApp',
   // Shortcut
   'registerShortcut',
+  // Plugin
+  'getPluginConfig',
+  'previewPlugin',
+  'installPlugin',
+  'loginPlugin',
+  'removePlugin',
+  'updatePluginProfile',
   // Misc
   'getGistUrl',
   'generateGistAgeKeyPair',
@@ -168,7 +175,8 @@ const validListenChannels = [
   'profileConfigUpdated',
   'groupsUpdated',
   'rulesUpdated',
-  'updateDownloadProgress'
+  'updateDownloadProgress',
+  'pluginConfigUpdated'
 ] as const
 
 // 允许的 send channels 白名单

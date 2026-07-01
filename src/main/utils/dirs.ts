@@ -105,6 +105,18 @@ export function profilePath(id: string): string {
   return path.join(profilesDir(), `${id}.yaml`)
 }
 
+export function pluginConfigPath(): string {
+  return path.join(dataDir(), 'plugin.yaml')
+}
+
+export function pluginVaultDir(): string {
+  return path.join(dataDir(), 'plugin-vault')
+}
+
+export function pluginVaultPath(id: string): string {
+  return path.join(pluginVaultDir(), `${id}.bin`)
+}
+
 export function overrideDir(): string {
   return path.join(dataDir(), 'override')
 }

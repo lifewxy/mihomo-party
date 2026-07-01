@@ -123,6 +123,14 @@ import { exportGistAgeSecretKey, generateGistAgeKeyPair, getGistUrl } from '../r
 import { startMonitor } from '../resolve/trafficMonitor'
 import { closeFloatingWindow, showContextMenu, showFloatingWindow } from '../resolve/floatingWindow'
 import { addProfileUpdater, removeProfileUpdater } from '../core/profileUpdater'
+import {
+  previewPlugin,
+  installPlugin,
+  loginPlugin,
+  removePlugin,
+  updatePluginProfile
+} from '../resolve/plugin'
+import { getPluginConfig } from '../config/plugin'
 import { getImageDataURL } from './image'
 import { get as httpGet } from './chromeRequest'
 import { getIconDataURL } from './icon'
@@ -339,6 +347,13 @@ const asyncHandlers: Record<string, AsyncFn> = {
   showFloatingWindow,
   closeFloatingWindow,
   showContextMenu,
+  // Plugin
+  getPluginConfig,
+  previewPlugin,
+  installPlugin,
+  loginPlugin,
+  removePlugin,
+  updatePluginProfile,
   // Misc
   getGistUrl,
   generateGistAgeKeyPair,

@@ -768,5 +768,38 @@
   "network.topology.resume": "ادامه",
   "settings.githubProxy": "پروکسی دانلود GitHub",
   "settings.githubProxy.auto": "خودکار (پروکسی اول)",
-  "settings.githubProxy.direct": "مستقیم"
+  "settings.githubProxy.direct": "مستقیم",
+  "plugins": {
+    "title": "افزونه‌های سرویس‌دهنده",
+    "import": "وارد کردن افزونه",
+    "chooseFile": "انتخاب فایل (.cpx)",
+    "next": "بعدی",
+    "install": "نصب",
+    "cancel": "لغو",
+    "confirmTitle": "تأیید نصب",
+    "provider": "سرویس‌دهنده",
+    "site": "وب‌سایت",
+    "loginUrl": "دامنه ورود",
+    "installNotice": "پس از نصب، مرورگر سیستم این دامنه را برای ورود باز می‌کند. رمز عبور فقط در سایت سرویس‌دهنده وارد می‌شود و این برنامه هرگز به آن دسترسی ندارد.",
+    "login": "ورود",
+    "relogin": "ورود دوباره",
+    "loginInProgress": "در مرورگر سیستم باز شد — لطفاً ورود را کامل کنید…",
+    "loginSuccess": "ورود انجام شد",
+    "loginFailed": "ورود ناموفق بود",
+    "needsLoginTip": "نصب شد — برای دریافت اشتراک وارد شوید",
+    "reauthTip": "نشست منقضی شده است، دوباره وارد شوید",
+    "useProxy": "از طریق پروکسی",
+    "useProxyWarning": "درخواست‌های افزونه از پروکسی mixed-port محلی عبور می‌کنند. بررسی https، میزبان، تغییر مسیر و اندازه همچنان اعمال می‌شود، اما IP نهایی قابل تأیید نیست و محافظت در برابر SSRF کاهش می‌یابد.",
+    "remove": "حذف",
+    "removeConfirm": "این افزونه و اشتراک آن حذف شود؟",
+    "status": {
+      "needs-login": "نیازمند ورود",
+      "active": "فعال",
+      "needs-reauth": "نیازمند ورود دوباره"
+    },
+    "installed": "نصب شد",
+    "installFailed": "نصب ناموفق بود",
+    "previewFailed": "فایل افزونه نامعتبر است",
+    "outdatedFile": "قالب فایل افزونه قدیمی است؛ لطفاً نسخه جدید را از سرویس‌دهنده دریافت کنید"
+  }
 }

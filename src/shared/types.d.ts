@@ -327,6 +327,7 @@ interface IAppConfig {
   autoQuitWithoutCoreMode?: 'core' | 'tray'
   useCustomSubStore?: boolean
   useProxyInSubStore?: boolean
+  pluginUseProxy?: boolean // 插件网关请求经由本地混合端口代理（安全保证降级，默认关闭）
   mihomoCpuPriority?: Priority
   customSubStoreUrl?: string
   diffWorkDir?: boolean
@@ -557,7 +558,7 @@ interface ISubscriptionUserInfo {
 
 interface IProfileItem {
   id: string
-  type: 'remote' | 'local'
+  type: 'remote' | 'local' | 'plugin'
   name: string
   url?: string // remote
   file?: string // local
@@ -574,6 +575,7 @@ interface IProfileItem {
   userAgent?: string
   ageSecretKey?: string
   updateTimeout?: number
+  pluginId?: string
 }
 
 interface ISubStoreSub {
@@ -581,4 +583,77 @@ interface ISubStoreSub {
   displayName?: string
   icon?: string
   tag?: string[]
+}
+
+interface IPluginProvider {
+  name: string
+  icon?: string
+  site?: string
+}
+
+// .cpx v2 — public, unencrypted descriptor. Contains NO secrets.
+interface IPluginDescriptor {
+  magic: 'CPXF'
+  v: 2
+  spec: 'cpx-plugin/2'
+  loginUrl: string // OAuth authorize endpoint, https, no query/fragment
+  provider: IPluginProvider
+}
+
+// Subset returned by previewPlugin for the install-confirm page (no records, no network)
+interface IPluginDescriptorPreview {
+  name: string
+  icon?: string
+  site?: string
+  loginUrl: string // full url; UI shows the host
+  spec: string
+}
+
+interface IGatewayEndpoints {
+  enroll: string
+  challenge: string
+  config: string
+  revoke: string
+}
+
+// /.well-known/cpx-gateway discovery response
+interface IGatewayWellKnown {
+  spec: 'cpx-plugin/2'
+  gateway: string // https origin, no path/query/fragment
+  endpoints: IGatewayEndpoints
+}
+
+type IPluginStatus = 'needs-login' | 'active' | 'needs-reauth'
+
+interface IPluginItem {
+  id: string
+  name: string
+  icon?: string
+  site?: string
+  loginUrl: string // public metadata; required to re-open the browser after restart
+  spec: string
+  profileId?: string // absent while 'needs-login'; present once 'active'/'needs-reauth'
+  status: IPluginStatus
+  interval?: number
+  autoUpdate?: boolean
+  created: number
+  updated: number
+  lastUpdateErrorType?: 'auth' | 'transient'
+  lastUpdateErrorAt?: number
+  nextRetryAt?: number
+  failureCount?: number
+}
+
+interface IPluginConfig {
+  items: IPluginItem[]
+}
+
+// safeStorage-encrypted vault payload — the ONLY place secrets live.
+interface IPluginVault {
+  devicePrivKey: string // Ed25519 raw 32-byte seed, base64 (standard, padded)
+  deviceId: string // UUIDv4
+  gateway: {
+    gateway: string // discovered https origin (cached for silent updates)
+    endpoints: IGatewayEndpoints
+  }
 }

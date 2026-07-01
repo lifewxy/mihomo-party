@@ -776,5 +776,38 @@
   "settings.githubProxy.direct": "Прямое подключение",
   "settings.triggerMainWindowBehavior": "Действие окна при нажатии на иконку в трее",
   "settings.triggerMainWindowBehaviorShow": "Открытие",
-  "settings.triggerMainWindowBehaviorToggle": "Открытие/Закрытие"
+  "settings.triggerMainWindowBehaviorToggle": "Открытие/Закрытие",
+  "plugins": {
+    "title": "Плагины провайдеров",
+    "import": "Импорт плагина",
+    "chooseFile": "Выбрать файл (.cpx)",
+    "next": "Далее",
+    "install": "Установить",
+    "cancel": "Отмена",
+    "confirmTitle": "Подтвердите установку",
+    "provider": "Провайдер",
+    "site": "Сайт",
+    "loginUrl": "Домен входа",
+    "installNotice": "После установки системный браузер откроет этот домен для входа. Пароль вводится только на сайте провайдера — приложение его не получает.",
+    "login": "Войти",
+    "relogin": "Войти снова",
+    "loginInProgress": "Открыто в браузере — завершите вход…",
+    "loginSuccess": "Вход выполнен",
+    "loginFailed": "Ошибка входа",
+    "needsLoginTip": "Установлено — войдите, чтобы получить подписку",
+    "reauthTip": "Сессия истекла, войдите снова",
+    "useProxy": "Через прокси",
+    "useProxyWarning": "Запросы плагина идут через локальный mixed-port прокси. Проверки https, хоста, редиректа и размера сохраняются, но итоговый IP не проверяется — защита от SSRF снижена.",
+    "remove": "Удалить",
+    "removeConfirm": "Удалить этот плагин и его подписку?",
+    "status": {
+      "needs-login": "Нужен вход",
+      "active": "Активен",
+      "needs-reauth": "Нужен повторный вход"
+    },
+    "installed": "Установлено",
+    "installFailed": "Ошибка установки",
+    "previewFailed": "Недействительный файл плагина",
+    "outdatedFile": "Формат файла плагина устарел; получите новый у провайдера"
+  }
 }

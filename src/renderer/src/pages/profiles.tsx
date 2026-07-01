@@ -13,10 +13,19 @@ import {
 import BasePage from '@renderer/components/base/base-page'
 import { toast } from '@renderer/components/base/toast'
 import ProfileItem from '@renderer/components/profiles/profile-item'
+import PluginItem from '@renderer/components/plugins/plugin-item'
+import PluginInstallModal from '@renderer/components/plugins/plugin-install-modal'
 import EditInfoModal from '@renderer/components/profiles/edit-info-modal'
 import { useProfileConfig } from '@renderer/hooks/use-profile-config'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
-import { getFilePath, readTextFile, subStoreCollections, subStoreSubs } from '@renderer/utils/ipc'
+import { usePluginConfig } from '@renderer/hooks/use-plugin-config'
+import {
+  getFilePath,
+  readTextFile,
+  subStoreCollections,
+  subStoreSubs,
+  updatePluginProfile
+} from '@renderer/utils/ipc'
 import type { KeyboardEvent } from 'react'
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MdContentPaste, MdUnfoldMore, MdUnfoldLess } from 'react-icons/md'
@@ -48,11 +57,12 @@ const Profiles: React.FC = () => {
     changeCurrentProfile,
     mutateProfileConfig
   } = useProfileConfig()
-  const { appConfig } = useAppConfig()
+  const { appConfig, patchAppConfig } = useAppConfig()
   const {
     useSubStore = DEFAULT_USE_SUB_STORE,
     useCustomSubStore = false,
-    customSubStoreUrl = ''
+    customSubStoreUrl = '',
+    pluginUseProxy = false
   } = appConfig || {}
   const { current, items = [] } = profileConfig || {}
   const navigate = useNavigate()
@@ -69,6 +79,8 @@ const Profiles: React.FC = () => {
   const [fileOver, setFileOver] = useState(false)
   const [url, setUrl] = useState('')
   const [, setNow] = useState(new Date())
+  const { pluginConfig, mutatePluginConfig } = usePluginConfig()
+  const [showPluginImport, setShowPluginImport] = useState(false)
   const isUrlEmpty = url.trim() === ''
   const sensors = useSensors(useSensor(PointerSensor))
   const { data: subs = [], mutate: mutateSubs } = useSWR(
@@ -256,12 +268,15 @@ const Profiles: React.FC = () => {
             setUpdating(true)
             for (const item of items) {
               if (item.id === current) continue
-              if (item.type !== 'remote') continue
-              await addProfileItem(item)
+              if (item.type === 'remote') await addProfileItem(item)
+              else if (item.type === 'plugin' && item.pluginId)
+                await updatePluginProfile(item.pluginId, true)
             }
             const currentItem = items.find((item) => item.id === current)
             if (currentItem && currentItem.type === 'remote') {
               await addProfileItem(currentItem)
+            } else if (currentItem?.type === 'plugin' && currentItem.pluginId) {
+              await updatePluginProfile(currentItem.pluginId, true)
             }
             setUpdating(false)
           }}
@@ -492,6 +507,40 @@ const Profiles: React.FC = () => {
           )}
         </div>
         <Divider />
+      </div>
+      <div className="px-2">
+        <div className="flex items-center justify-between mt-2 mb-2">
+          <span className="font-bold">{t('plugins.title')}</span>
+          <div className="flex items-center gap-3">
+            <Tooltip content={t('plugins.useProxyWarning')} placement="bottom">
+              <Checkbox
+                size="sm"
+                isSelected={pluginUseProxy}
+                onValueChange={(v) => patchAppConfig({ pluginUseProxy: v })}
+              >
+                {t('plugins.useProxy')}
+              </Checkbox>
+            </Tooltip>
+            <Button size="sm" color="primary" onPress={() => setShowPluginImport(true)}>
+              {t('plugins.import')}
+            </Button>
+          </div>
+        </div>
+        {(pluginConfig?.items?.length ?? 0) > 0 && (
+          <div className="grid grid-cols-1 gap-2 mb-3">
+            {pluginConfig?.items?.map((p) => (
+              <PluginItem key={p.id} item={p} onChanged={mutatePluginConfig} />
+            ))}
+          </div>
+        )}
+        {showPluginImport && (
+          <PluginInstallModal
+            onClose={() => {
+              setShowPluginImport(false)
+              mutatePluginConfig()
+            }}
+          />
+        )}
       </div>
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
         <div

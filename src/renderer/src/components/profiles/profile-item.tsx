@@ -17,7 +17,7 @@ import dayjs from '@renderer/utils/dayjs'
 import React, { Key, useMemo, useState } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { openFile } from '@renderer/utils/ipc'
+import { openFile, updatePluginProfile } from '@renderer/utils/ipc'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
 import { useTranslation } from 'react-i18next'
 import BaseConfirmModal from '../base/base-confirm-modal'
@@ -296,18 +296,22 @@ const ProfileItem: React.FC<Props> = (props) => {
                 {info?.name}
               </h3>
               <div className="flex">
-                {info.type === 'remote' && (
+                {(info.type === 'remote' || info.type === 'plugin') && (
                   <Tooltip placement="left" content={dayjs(info.updated).fromNow()}>
                     <Button
                       isIconOnly
                       size="sm"
                       variant="light"
                       color="default"
-                      disabled={updating}
+                      disabled={updating || (info.type === 'plugin' && !info.pluginId)}
                       onPress={async () => {
-                        setUpdating(true)
-                        await addProfileItem(info)
-                        setUpdating(false)
+                        try {
+                          setUpdating(true)
+                          if (info.type === 'remote') await addProfileItem(info)
+                          else if (info.pluginId) await updatePluginProfile(info.pluginId, true)
+                        } finally {
+                          setUpdating(false)
+                        }
                       }}
                     >
                       <IoMdRefresh

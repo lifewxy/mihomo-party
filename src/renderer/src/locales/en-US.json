@@ -804,5 +804,38 @@
   "network.topology.resume": "Resume",
   "settings.githubProxy": "GitHub Download Proxy",
   "settings.githubProxy.auto": "Auto (proxy first)",
-  "settings.githubProxy.direct": "Direct"
+  "settings.githubProxy.direct": "Direct",
+  "plugins": {
+    "title": "Airport Plugins",
+    "import": "Import Plugin",
+    "chooseFile": "Choose File (.cpx)",
+    "next": "Next",
+    "install": "Install",
+    "cancel": "Cancel",
+    "confirmTitle": "Confirm Install",
+    "provider": "Provider",
+    "site": "Website",
+    "loginUrl": "Login domain",
+    "installNotice": "After install, your system browser opens this domain to log in. Your password is only entered on the provider's site — this app never touches it.",
+    "login": "Log In",
+    "relogin": "Log In Again",
+    "loginInProgress": "Opened in your system browser — please complete the login…",
+    "loginSuccess": "Logged in",
+    "loginFailed": "Login failed",
+    "needsLoginTip": "Installed — log in to fetch the subscription",
+    "reauthTip": "Session expired, please log in again",
+    "useProxy": "Via Proxy",
+    "useProxyWarning": "Plugin requests go through the local mixed-port proxy. https, host, redirect and size checks still apply, but the final resolved IP cannot be verified, so SSRF protection is reduced.",
+    "remove": "Remove",
+    "removeConfirm": "Remove this plugin and its subscription?",
+    "status": {
+      "needs-login": "Needs login",
+      "active": "Active",
+      "needs-reauth": "Needs re-login"
+    },
+    "installed": "Installed",
+    "installFailed": "Install failed",
+    "previewFailed": "Invalid plugin file",
+    "outdatedFile": "This plugin file format is outdated; please obtain the new one from your provider"
+  }
 }

@@ -153,6 +153,13 @@ interface IpcApi {
   createHeapSnapshot: () => Promise<void>
   // Shortcut
   registerShortcut: (oldShortcut: string, newShortcut: string, action: string) => Promise<boolean>
+  // Plugin
+  getPluginConfig: (force?: boolean) => Promise<IPluginConfig>
+  previewPlugin: (fileBytesB64: string) => Promise<IPluginDescriptorPreview>
+  installPlugin: (fileBytesB64: string) => Promise<IPluginItem>
+  loginPlugin: (id: string) => Promise<void>
+  removePlugin: (id: string) => Promise<void>
+  updatePluginProfile: (id: string, force?: boolean) => Promise<void>
   // Misc
   getGistUrl: () => Promise<string>
   generateGistAgeKeyPair: () => Promise<{ secretKey: string; recipient: string }>
@@ -310,6 +317,13 @@ export const {
   createHeapSnapshot,
   // Shortcut
   registerShortcut,
+  // Plugin
+  getPluginConfig,
+  previewPlugin,
+  installPlugin,
+  loginPlugin,
+  removePlugin,
+  updatePluginProfile,
   // Misc
   getGistUrl,
   generateGistAgeKeyPair,
