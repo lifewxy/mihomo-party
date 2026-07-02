@@ -7,7 +7,7 @@ import { KeyedMutator } from 'swr'
 
 interface Props {
   mutateProxies: KeyedMutator<IMihomoMixedGroup[]>
-  onProxyDelay: (proxy: string, url?: string) => Promise<IMihomoDelay>
+  onProxyDelay: (proxy: IMihomoProxy | IMihomoGroup, url?: string) => Promise<IMihomoDelay>
   proxyDisplayMode: 'simple' | 'full'
   proxy: IMihomoProxy | IMihomoGroup
   group: IMihomoMixedGroup
@@ -55,11 +55,11 @@ const ProxyItemBase: React.FC<Props> = (props) => {
 
   const onDelay = useCallback((): void => {
     setLoading(true)
-    onProxyDelay(proxy.name, group.testUrl).finally(() => {
+    onProxyDelay(proxy, group.testUrl).finally(() => {
       mutateProxies()
       setLoading(false)
     })
-  }, [proxy.name, group.testUrl, onProxyDelay, mutateProxies])
+  }, [proxy, group.testUrl, onProxyDelay, mutateProxies])
 
   const fixed = useMemo(() => group.fixed && group.fixed === proxy.name, [group.fixed, proxy.name])
 

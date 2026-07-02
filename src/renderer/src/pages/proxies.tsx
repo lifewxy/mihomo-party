@@ -24,6 +24,10 @@ import { useTranslation } from 'react-i18next'
 
 const GROUP_EXPAND_STATE_KEY = 'proxy_group_expand_state'
 
+function getProviderName(proxy: IMihomoProxy | IMihomoGroup): string | undefined {
+  return 'provider-name' in proxy ? proxy['provider-name'] : undefined
+}
+
 // 自定义 hook 用于管理展开状态
 const useProxyState = (
   groups: IMihomoMixedGroup[]
@@ -191,9 +195,12 @@ const Proxies: React.FC = () => {
     [autoCloseConnection, mutate]
   )
 
-  const onProxyDelay = useCallback(async (proxy: string, url?: string): Promise<IMihomoDelay> => {
-    return await mihomoProxyDelay(proxy, url)
-  }, [])
+  const onProxyDelay = useCallback(
+    async (proxy: IMihomoProxy | IMihomoGroup, url?: string): Promise<IMihomoDelay> => {
+      return await mihomoProxyDelay(proxy.name, url, getProviderName(proxy))
+    },
+    []
+  )
 
   // 组测速时逐节点写回会造成 O(N²) 分配与 N 次 allProxies 重算
   const pendingDelayResults = useRef<Map<string, Map<string, { time: string; delay: number }>>>(
@@ -299,7 +306,7 @@ const Proxies: React.FC = () => {
         const promise = Promise.resolve().then(async () => {
           let res: IMihomoDelay | undefined
           try {
-            res = await mihomoProxyDelay(proxy.name, groups[index].testUrl)
+            res = await mihomoProxyDelay(proxy.name, groups[index].testUrl, getProviderName(proxy))
           } catch {
             // ignore
           }

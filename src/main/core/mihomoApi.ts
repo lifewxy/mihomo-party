@@ -238,31 +238,95 @@ export const mihomoProxies = async (): Promise<IMihomoProxies> => {
   return proxies
 }
 
+function isMihomoGroup(proxy: IMihomoProxy | IMihomoGroup | undefined): proxy is IMihomoGroup {
+  return Boolean(proxy && 'all' in proxy)
+}
+
+const PROVIDER_DETAIL_FETCH_THRESHOLD = 8
+
+async function mihomoProxyProvider(name: string): Promise<IMihomoProxyProvider> {
+  const instance = await getAxios()
+  return await instance.get(`/providers/proxies/${encodeURIComponent(name)}`)
+}
+
+async function resolveProviderProxies(
+  names: Set<string>,
+  providerNames: Set<string>,
+  fallbackToAllProviders: boolean
+): Promise<Record<string, IMihomoProxy>> {
+  if (names.size === 0) return {}
+
+  const providers =
+    fallbackToAllProviders || providerNames.size > PROVIDER_DETAIL_FETCH_THRESHOLD
+      ? Object.values((await mihomoProxyProviders()).providers)
+      : (
+          await Promise.allSettled([...providerNames].map((name) => mihomoProxyProvider(name)))
+        ).flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []))
+
+  const providerProxies: Record<string, IMihomoProxy> = {}
+  providers.forEach((provider) => {
+    provider.proxies?.forEach((proxy) => {
+      if (names.has(proxy.name)) {
+        providerProxies[proxy.name] = proxy
+      }
+    })
+  })
+  return providerProxies
+}
+
 export const mihomoGroups = async (): Promise<IMihomoMixedGroup[]> => {
   const { mode = 'rule' } = await getControledMihomoConfig()
   if (mode === 'direct') return []
-  const proxies = await mihomoProxies()
-  const runtime = await getRuntimeConfig()
-  const groups: IMihomoMixedGroup[] = []
-  runtime?.['proxy-groups']?.forEach((group: { name: string; url?: string }) => {
-    const { name, url } = group
-    if (proxies.proxies[name] && 'all' in proxies.proxies[name] && !proxies.proxies[name].hidden) {
-      const newGroup = proxies.proxies[name]
-      newGroup.testUrl = url
-      const newAll = (newGroup.all || []).map((name) => proxies.proxies[name])
-      groups.push({ ...newGroup, all: newAll })
+  const [proxies, runtime] = await Promise.all([mihomoProxies(), getRuntimeConfig()])
+  const rawGroups: { group: IMihomoGroup; providers: string[] }[] = []
+
+  runtime?.['proxy-groups']?.forEach((group: { name: string; url?: string; use?: string[] }) => {
+    const proxy = proxies.proxies[group.name]
+    if (isMihomoGroup(proxy) && !proxy.hidden) {
+      rawGroups.push({ group: { ...proxy, testUrl: group.url }, providers: group.use || [] })
     }
   })
-  if (!groups.find((group) => group.name === 'GLOBAL')) {
-    const newGlobal = proxies.proxies['GLOBAL'] as IMihomoGroup
-    if (!newGlobal.hidden) {
-      const newAll = (newGlobal.all || []).map((name) => proxies.proxies[name])
-      groups.push({ ...newGlobal, all: newAll })
+
+  if (!rawGroups.find(({ group }) => group.name === 'GLOBAL')) {
+    const global = proxies.proxies['GLOBAL']
+    if (isMihomoGroup(global) && !global.hidden) {
+      rawGroups.push({ group: global, providers: [] })
     }
   }
+
+  const missingProxyNames = new Set<string>()
+  const providerNames = new Set<string>()
+  let fallbackToAllProviders = false
+  rawGroups.forEach(({ group, providers }) => {
+    const proxyNames = group.all || []
+    proxyNames.forEach((name) => {
+      if (!proxies.proxies[name]) {
+        missingProxyNames.add(name)
+        if (providers.length > 0) {
+          providers.forEach((provider) => providerNames.add(provider))
+        } else {
+          fallbackToAllProviders = true
+        }
+      }
+    })
+  })
+
+  const providerProxies = await resolveProviderProxies(
+    missingProxyNames,
+    providerNames,
+    fallbackToAllProviders
+  )
+  const groups: IMihomoMixedGroup[] = []
+  rawGroups.forEach(({ group }) => {
+    const newAll = (group.all || [])
+      .map((name) => proxies.proxies[name] || providerProxies[name])
+      .filter((proxy): proxy is IMihomoProxy | IMihomoGroup => Boolean(proxy))
+    groups.push({ ...group, all: newAll })
+  })
+
   if (mode === 'global') {
     const global = groups.findIndex((group) => group.name === 'GLOBAL')
-    groups.unshift(groups.splice(global, 1)[0])
+    if (global > 0) groups.unshift(groups.splice(global, 1)[0])
   }
   return groups
 }
@@ -302,11 +366,18 @@ export const mihomoUpgradeGeo = async (): Promise<void> => {
   return await instance.post('/configs/geo')
 }
 
-export const mihomoProxyDelay = async (proxy: string, url?: string): Promise<IMihomoDelay> => {
+export const mihomoProxyDelay = async (
+  proxy: string,
+  url?: string,
+  provider?: string
+): Promise<IMihomoDelay> => {
   const appConfig = await getAppConfig()
   const { delayTestUrl, delayTestTimeout } = appConfig
   const instance = await getAxios()
-  return await instance.get(`/proxies/${encodeURIComponent(proxy)}/delay`, {
+  const path = provider
+    ? `/providers/proxies/${encodeURIComponent(provider)}/${encodeURIComponent(proxy)}/healthcheck`
+    : `/proxies/${encodeURIComponent(proxy)}/delay`
+  return await instance.get(path, {
     params: {
       url: delayTestUrl || url || 'https://www.gstatic.com/generate_204',
       timeout: delayTestTimeout || 5000
