@@ -11,6 +11,7 @@ import {
   setupFirewall
 } from '@renderer/utils/ipc'
 import { platform } from '@renderer/utils/init'
+import { ipCIDRValidator } from '@renderer/utils/validate'
 import React, { Key, useState } from 'react'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
 import { MdDeleteForever } from 'react-icons/md'
@@ -55,6 +56,20 @@ const Tun: React.FC = () => {
     originSetValues(v)
     setChanged(true)
   }
+  const normalizedRouteExcludeAddress = values.routeExcludeAddress
+    .map((address) => address.trim())
+    .filter(Boolean)
+  const hasInvalidExcludeAddress = normalizedRouteExcludeAddress.some(
+    (address) => !ipCIDRValidator(address)
+  )
+  const excludeAddressInputs = hasInvalidExcludeAddress
+    ? values.routeExcludeAddress
+    : [...values.routeExcludeAddress, '']
+  const getExcludeAddressError = (address: string): string | undefined => {
+    const trimmedAddress = address.trim()
+    if (trimmedAddress === '' || ipCIDRValidator(trimmedAddress)) return undefined
+    return t('tun.excludeAddress.invalid')
+  }
 
   const handleExcludeAddressChange = (value: string, index: number): void => {
     const newExcludeAddresses = [...values.routeExcludeAddress]
@@ -73,11 +88,19 @@ const Tun: React.FC = () => {
   }
 
   const onSave = async (patch: Partial<IMihomoConfig>): Promise<void> => {
+    const tunPatch = { ...patch.tun }
+    if (hasInvalidExcludeAddress) {
+      // 存在非法条目时不覆盖已保存的排除地址，避免静默丢弃用户数据；其它 TUN 设置照常保存
+      delete tunPatch['route-exclude-address']
+    } else {
+      // 全部合法：写入去空格、去空项后的列表
+      tunPatch['route-exclude-address'] = normalizedRouteExcludeAddress
+    }
     try {
-      await patchControledMihomoConfig(patch)
+      await patchControledMihomoConfig({ ...patch, tun: tunPatch })
       await mihomoHotReloadConfig()
     } catch (e) {
-      showErrorSync(e, t('common.error.configSaveFailed'))
+      showErrorSync(e, t('common.error.updateCoreConfigFailed'))
     } finally {
       setChanged(false)
     }
@@ -256,13 +279,15 @@ const Tun: React.FC = () => {
           </SettingItem>
           <div className="flex flex-col items-stretch">
             <h3 className="mb-2">{t('tun.excludeAddress.title')}</h3>
-            {[...values.routeExcludeAddress, ''].map((address, index) => (
+            {excludeAddressInputs.map((address, index) => (
               <div key={index} className="mb-2 flex">
                 <Input
                   fullWidth
                   size="sm"
                   placeholder={t('tun.excludeAddress.placeholder')}
                   value={address}
+                  isInvalid={Boolean(getExcludeAddressError(address))}
+                  errorMessage={getExcludeAddressError(address)}
                   onValueChange={(v) => handleExcludeAddressChange(v, index)}
                 />
                 {index < values.routeExcludeAddress.length && (
@@ -278,6 +303,9 @@ const Tun: React.FC = () => {
                 )}
               </div>
             ))}
+            {hasInvalidExcludeAddress && (
+              <div className="px-1 text-xs text-danger">{t('tun.excludeAddress.notSaved')}</div>
+            )}
           </div>
         </SettingCard>
       </BasePage>
