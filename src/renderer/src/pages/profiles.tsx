@@ -81,6 +81,9 @@ const Profiles: React.FC = () => {
   const [, setNow] = useState(new Date())
   const { pluginConfig, mutatePluginConfig } = usePluginConfig()
   const [showPluginImport, setShowPluginImport] = useState(false)
+  const [pluginDropFile, setPluginDropFile] = useState<File | null>(null)
+  // bump per .cpx drop -> remount modal so it loads the new file even when open
+  const [pluginDropSeq, setPluginDropSeq] = useState(0)
   const isUrlEmpty = url.trim() === ''
   const sensors = useSensors(useSensor(PointerSensor))
   const { data: subs = [], mutate: mutateSubs } = useSWR(
@@ -218,7 +221,8 @@ const Profiles: React.FC = () => {
       event.stopPropagation()
       if (event.dataTransfer?.files) {
         const file = event.dataTransfer.files[0]
-        if (file.name.endsWith('.yml') || file.name.endsWith('.yaml')) {
+        const name = file?.name.toLowerCase() ?? ''
+        if (name.endsWith('.yml') || name.endsWith('.yaml')) {
           try {
             const path = window.api.webUtils.getPathForFile(file)
             const content = await readTextFile(path)
@@ -226,7 +230,12 @@ const Profiles: React.FC = () => {
           } catch (e) {
             toast.error(String(e))
           }
-        } else {
+        } else if (name.endsWith('.cpx')) {
+          // .cpx -> plugin install modal (preview + confirm)
+          setPluginDropFile(file)
+          setPluginDropSeq((n) => n + 1)
+          setShowPluginImport(true)
+        } else if (file) {
           toast.warning(tRef.current('profiles.error.unsupportedFileType'))
         }
       }
@@ -535,8 +544,11 @@ const Profiles: React.FC = () => {
         )}
         {showPluginImport && (
           <PluginInstallModal
+            key={pluginDropSeq}
+            initialFile={pluginDropFile ?? undefined}
             onClose={() => {
               setShowPluginImport(false)
+              setPluginDropFile(null)
               mutatePluginConfig()
             }}
           />

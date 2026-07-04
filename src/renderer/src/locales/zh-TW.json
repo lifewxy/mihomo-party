@@ -832,6 +832,7 @@
     "installed": "已安裝",
     "installFailed": "安裝失敗",
     "previewFailed": "外掛檔案無效",
-    "outdatedFile": "該外掛檔案格式已過期，請從機場重新取得"
+    "outdatedFile": "該外掛檔案格式已過期，請從機場重新取得",
+    "fileTooLarge": "外掛檔案過大"
   }
 }

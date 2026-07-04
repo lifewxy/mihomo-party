@@ -1,12 +1,15 @@
 import { Modal, ModalContent, ModalHeader, ModalBody, ModalFooter, Button } from '@heroui/react'
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from '@renderer/components/base/toast'
 import { previewPlugin, installPlugin } from '@renderer/utils/ipc'
 
 interface Props {
   onClose: () => void
+  initialFile?: File // dropped file: auto-load + preview on open
 }
+
+const MAX_CPX_BYTES = 10 * 1024 * 1024 // guard against a huge mis-dropped file freezing the renderer
 
 function abToBase64(buf: ArrayBuffer): string {
   let binary = ''
@@ -23,7 +26,7 @@ function hostOf(url: string): string {
   }
 }
 
-const PluginInstallModal: React.FC<Props> = ({ onClose }) => {
+const PluginInstallModal: React.FC<Props> = ({ onClose, initialFile }) => {
   const { t } = useTranslation()
   const fileInput = useRef<HTMLInputElement>(null)
   const [fileName, setFileName] = useState('')
@@ -31,18 +34,29 @@ const PluginInstallModal: React.FC<Props> = ({ onClose }) => {
   const [preview, setPreview] = useState<IPluginDescriptorPreview | null>(null)
   const [busy, setBusy] = useState(false)
 
-  const onPickFile = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
-    const f = e.target.files?.[0]
-    if (!f) return
-    setFileName(f.name)
-    setFileB64(abToBase64(await f.arrayBuffer()))
-    setPreview(null)
+  // file -> base64, or null if rejected/unreadable (toasts here)
+  const loadFile = async (f: File): Promise<string | null> => {
+    if (f.size > MAX_CPX_BYTES) {
+      toast.error(t('plugins.fileTooLarge'))
+      return null
+    }
+    try {
+      const b64 = abToBase64(await f.arrayBuffer())
+      setFileName(f.name)
+      setFileB64(b64)
+      setPreview(null)
+      return b64
+    } catch {
+      toast.error(t('plugins.previewFailed'))
+      return null
+    }
   }
 
-  const doPreview = async (): Promise<void> => {
+  // preview by explicit b64 (state may not be flushed yet)
+  const previewB64 = async (b64: string): Promise<void> => {
     setBusy(true)
     try {
-      setPreview(await previewPlugin(fileB64))
+      setPreview(await previewPlugin(b64))
     } catch (e) {
       const msg = e instanceof Error ? e.message : ''
       toast.error(msg.includes('v1') ? t('plugins.outdatedFile') : t('plugins.previewFailed'))
@@ -50,6 +64,24 @@ const PluginInstallModal: React.FC<Props> = ({ onClose }) => {
       setBusy(false)
     }
   }
+
+  const onPickFile = async (e: React.ChangeEvent<HTMLInputElement>): Promise<void> => {
+    const f = e.target.files?.[0]
+    if (!f) return
+    await loadFile(f)
+  }
+
+  const doPreview = async (): Promise<void> => {
+    await previewB64(fileB64)
+  }
+
+  useEffect(() => {
+    if (!initialFile) return
+    loadFile(initialFile).then((b64) => {
+      if (b64) previewB64(b64)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const doInstall = async (): Promise<void> => {
     setBusy(true)
@@ -78,7 +110,7 @@ const PluginInstallModal: React.FC<Props> = ({ onClose }) => {
                 className="hidden"
                 onChange={onPickFile}
               />
-              <Button variant="flat" onPress={() => fileInput.current?.click()}>
+              <Button variant="flat" isDisabled={busy} onPress={() => fileInput.current?.click()}>
                 {fileName || t('plugins.chooseFile')}
               </Button>
             </div>

@@ -832,6 +832,7 @@
     "installed": "已安装",
     "installFailed": "安装失败",
     "previewFailed": "插件文件无效",
-    "outdatedFile": "该插件文件格式已过期，请从机场重新获取"
+    "outdatedFile": "该插件文件格式已过期，请从机场重新获取",
+    "fileTooLarge": "插件文件过大"
   }
 }

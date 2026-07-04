@@ -22,12 +22,14 @@ const checks = [
   {
     name: 'Format Check',
     command: 'run format:check',
-    help: 'Formatting issues were reported above. Review the listed files and fix them before committing again.'
+    fixCommand: 'run format',
+    help: 'Formatting issues were reported above and could not be auto-fixed. Review the listed files and fix them before committing again.'
   },
   {
     name: 'Lint Check',
     command: 'run lint:check',
-    help: 'Lint errors were reported above. Review them and fix the affected code before committing again.'
+    fixCommand: 'run lint',
+    help: 'Lint errors were reported above and could not be auto-fixed. Review them and fix the affected code before committing again.'
   },
   {
     name: 'Type Check',
@@ -56,6 +58,45 @@ function commandExists(command) {
   return !result.error && result.status === 0
 }
 
+function gitCommand(args, { stdio = 'inherit' } = {}) {
+  return spawnSync('git', args, {
+    cwd: process.cwd(),
+    stdio
+  })
+}
+
+function getStagedFiles() {
+  const result = gitCommand(['diff', '--name-only', '--cached', '--diff-filter=ACMR', '-z'], {
+    stdio: 'pipe'
+  })
+
+  if (result.error || result.status !== 0) {
+    console.error('[pre-commit] Failed to read staged files for auto-fix restaging.')
+    if (result.error) {
+      console.error(result.error.message)
+    }
+    process.exit(result.status ?? 1)
+  }
+
+  return result.stdout.toString('utf8').split('\0').filter(Boolean)
+}
+
+function restageFiles(files) {
+  if (files.length === 0) {
+    return
+  }
+
+  const result = gitCommand(['add', '--', ...files])
+
+  if (result.error || result.status !== 0) {
+    console.error('[pre-commit] Auto-fix completed, but failed to restage fixed files.')
+    if (result.error) {
+      console.error(result.error.message)
+    }
+    process.exit(result.status ?? 1)
+  }
+}
+
 function printDivider() {
   console.log('========================================')
 }
@@ -73,12 +114,40 @@ printDivider()
 
 for (const check of checks) {
   console.log(`\n[pre-commit] ${check.name}`)
-  const result = spawnCommand(runner.run(check.command))
+  let result = spawnCommand(runner.run(check.command))
 
   if (result.error) {
     console.error(`\n[pre-commit] Failed to run "${check.command}".`)
     console.error(result.error.message)
     process.exit(1)
+  }
+
+  if (result.status !== 0 && check.fixCommand) {
+    console.log(`\n[pre-commit] ${check.name} failed. Running auto-fix...`)
+    const fixResult = spawnCommand(runner.run(check.fixCommand))
+
+    if (fixResult.error) {
+      console.error(`\n[pre-commit] Failed to run "${check.fixCommand}".`)
+      console.error(fixResult.error.message)
+      process.exit(1)
+    }
+
+    if (fixResult.status !== 0) {
+      console.error(`\n[pre-commit] Auto-fix command "${check.fixCommand}" failed.`)
+      console.error(`[pre-commit] ${check.help}`)
+      console.error('[pre-commit] Commit aborted.')
+      process.exit(fixResult.status ?? 1)
+    }
+
+    restageFiles(getStagedFiles())
+    console.log(`[pre-commit] Auto-fix completed. Re-running ${check.name}.`)
+    result = spawnCommand(runner.run(check.command))
+
+    if (result.error) {
+      console.error(`\n[pre-commit] Failed to run "${check.command}".`)
+      console.error(result.error.message)
+      process.exit(1)
+    }
   }
 
   if (result.status !== 0) {

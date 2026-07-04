@@ -836,6 +836,7 @@
     "installed": "Installed",
     "installFailed": "Install failed",
     "previewFailed": "Invalid plugin file",
-    "outdatedFile": "This plugin file format is outdated; please obtain the new one from your provider"
+    "outdatedFile": "This plugin file format is outdated; please obtain the new one from your provider",
+    "fileTooLarge": "Plugin file is too large"
   }
 }
