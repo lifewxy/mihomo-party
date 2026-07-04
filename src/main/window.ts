@@ -18,11 +18,8 @@ interface WindowState {
   isMaximized?: boolean
 }
 
-const WINDOW_STATE_SAVE_DELAY = 100
-
 // 内存态，最大化期间保留上次普通尺寸（#1954）。
 let windowState: WindowState = { width: 800, height: 600 }
-let saveStateTimer: NodeJS.Timeout | null = null
 
 function windowStateFile(): string {
   return join(dataDir(), 'window-state.json')
@@ -59,10 +56,10 @@ function isNormalWindow(window: BrowserWindow): boolean {
   return !window.isMaximized() && !window.isMinimized() && !window.isFullScreen()
 }
 
-// getContentBounds（非 getBounds）避免 Windows 小数 DPI 每次重启变大（#1857）。
-// trackBounds=false 只记最大化标志，因 unmaximize 时尺寸未稳定会返回满屏值（#1954）。
+// 仅可见时采集（隐藏态 bounds 脏）。getContentBounds 防 Win DPI 逐次变大（#1857）；
+// trackBounds=false 只记最大化标志（unmaximize 尺寸未稳定）（#1954）。
 function updateWindowState(window: BrowserWindow, trackBounds = true): void {
-  if (window.isDestroyed()) return
+  if (window.isDestroyed() || !window.isVisible()) return
   try {
     if (trackBounds && isNormalWindow(window)) {
       const bounds = window.getContentBounds()
@@ -85,29 +82,10 @@ function persistWindowState(): void {
   }
 }
 
-function clearSaveStateTimer(): void {
-  if (saveStateTimer) {
-    clearTimeout(saveStateTimer)
-    saveStateTimer = null
-  }
-}
-
-// 同步兜底，用于关窗/退出（Wayland 可能不触发 resize）。
+// 采集 + 落盘。仅关窗/退出/会话结束调用（resize 只入内存）。
 function saveWindowState(window: BrowserWindow): void {
-  clearSaveStateTimer()
   updateWindowState(window)
   persistWindowState()
-}
-
-// 防抖，用于 resize/move/maximize/unmaximize。
-function scheduleSaveWindowState(window: BrowserWindow, trackBounds = true): void {
-  clearSaveStateTimer()
-  saveStateTimer = setTimeout(() => {
-    saveStateTimer = null
-    if (window.isDestroyed()) return // 崩溃重建后旧回调
-    updateWindowState(window, trackBounds)
-    persistWindowState()
-  }, WINDOW_STATE_SAVE_DELAY)
 }
 
 function ensureVisibleOnScreen(state: WindowState): WindowState {
@@ -299,17 +277,16 @@ function setupWindowEvents(window: BrowserWindow, config: WindowConfig): void {
   })
 
   window.on('closed', () => {
-    clearSaveStateTimer()
     if (mainWindow === window) {
       mainWindow = null
     }
   })
 
-  // resize/move（非 resized/moved，Wayland 常不触发）+ 防抖（#1954）
-  window.on('resize', () => scheduleSaveWindowState(window))
-  window.on('move', () => scheduleSaveWindowState(window))
-  window.on('maximize', () => scheduleSaveWindowState(window, false))
-  window.on('unmaximize', () => scheduleSaveWindowState(window, false))
+  // 用 resize/move（Wayland 常不触发 resized/moved），只入内存，落盘留给关窗/退出（#1954）
+  window.on('resize', () => updateWindowState(window))
+  window.on('move', () => updateWindowState(window))
+  window.on('maximize', () => updateWindowState(window, false))
+  window.on('unmaximize', () => updateWindowState(window, false))
 
   window.on('session-end', async () => {
     saveWindowState(window)
@@ -392,4 +369,11 @@ export function showMainWindow(): void {
 
 export function closeMainWindow(): void {
   mainWindow?.close()
+}
+
+// 退出兜底：硬退出（app.exit）不触发窗口 close（#1954）。
+export function saveMainWindowState(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    saveWindowState(mainWindow)
+  }
 }

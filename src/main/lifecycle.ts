@@ -7,6 +7,7 @@ import { stopCore, cleanupCoreWatcher } from './core/manager'
 import { primeAdminPrivilegesCache } from './core/admin'
 import { triggerSysProxy, disableSysProxySync } from './sys/sysproxy'
 import { exePath } from './utils/dirs'
+import { saveMainWindowState } from './window'
 
 export function customRelaunch(): void {
   const script = `while kill -0 ${process.pid} 2>/dev/null; do
@@ -97,6 +98,8 @@ export function setupAppLifecycle(): void {
   const cleanupBeforeExit = async (): Promise<void> => {
     if (isQuitting) return
     isQuitting = true
+
+    saveMainWindowState() // 硬退出补一次落盘
 
     cleanupCoreWatcher()
 
