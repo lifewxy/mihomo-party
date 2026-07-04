@@ -128,6 +128,13 @@ export async function patchControledMihomoConfig(patch: Partial<IMihomoConfig>):
         controledMihomoLogger.warn('Failed to restart log stream after log-level change', error)
       }
     }
+
+    try {
+      const { scheduleRuntimeConfigUpload } = await import('../resolve/gistApi')
+      scheduleRuntimeConfigUpload()
+    } catch (error) {
+      controledMihomoLogger.warn('Failed to schedule runtime config Gist sync', error)
+    }
   })
   await controledMihomoWriteQueue
 }

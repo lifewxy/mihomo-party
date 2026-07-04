@@ -1,10 +1,13 @@
 import { writeFile } from 'fs/promises'
+import { createHash } from 'crypto'
 import { dialog } from 'electron'
 import * as chromeRequest from '../utils/chromeRequest'
-import { getAppConfig, getControledMihomoConfig } from '../config'
+import { getAppConfig } from '../config/app'
+import { getControledMihomoConfig } from '../config/controledMihomo'
 import { DEFAULT_MIHOMO_PORTS } from '../../shared/appConfig'
 import { getRuntimeConfigStr } from '../core/factory'
 import { encryptAgeContent, generateAgeKeyPair } from '../utils/age'
+import { createLogger } from '../utils/logger'
 
 interface GistInfo {
   id: string
@@ -15,6 +18,16 @@ interface GistInfo {
 interface GistAgeKeyPair {
   secretKey: string
   recipient: string
+}
+
+const gistApiLogger = createLogger('GistApi')
+let runtimeConfigUploadTimer: ReturnType<typeof setTimeout> | undefined
+let runtimeConfigUploadQueue: Promise<void> = Promise.resolve()
+let lastUploadedRuntimeConfigHash: string | undefined
+let uploadingRuntimeConfigHash: string | undefined
+
+function hashRuntimeConfig(runtimeConfig: string): string {
+  return createHash('sha256').update(runtimeConfig).digest('hex')
 }
 
 async function listGists(token: string): Promise<GistInfo[]> {
@@ -98,12 +111,11 @@ export async function getGistUrl(): Promise<string> {
   }
 }
 
-export async function uploadRuntimeConfig(): Promise<void> {
+async function uploadRuntimeConfigContent(runtimeConfig: string): Promise<boolean> {
   const { githubToken, gistAgeEncrypt = false, gistAgeRecipient } = await getAppConfig()
-  if (!githubToken) return
+  if (!githubToken) return false
   const gists = await listGists(githubToken)
   const gist = gists.find((gist) => gist.description === 'Auto Synced Clash Party Runtime Config')
-  const runtimeConfig = await getRuntimeConfigStr()
   const config = gistAgeEncrypt
     ? await encryptAgeContent(runtimeConfig, gistAgeRecipient, 'gist runtime config')
     : runtimeConfig
@@ -112,6 +124,65 @@ export async function uploadRuntimeConfig(): Promise<void> {
   } else {
     await createGist(githubToken, config)
   }
+  return true
+}
+
+export async function uploadRuntimeConfig(): Promise<void> {
+  const runtimeConfig = await getRuntimeConfigStr()
+  const runtimeConfigHash = hashRuntimeConfig(runtimeConfig)
+  uploadingRuntimeConfigHash = runtimeConfigHash
+  try {
+    const uploaded = await uploadRuntimeConfigContent(runtimeConfig)
+    if (uploaded) {
+      lastUploadedRuntimeConfigHash = runtimeConfigHash
+    }
+  } finally {
+    if (uploadingRuntimeConfigHash === runtimeConfigHash) {
+      uploadingRuntimeConfigHash = undefined
+    }
+  }
+}
+
+export async function uploadRuntimeConfigIfChanged(): Promise<void> {
+  const runtimeConfig = await getRuntimeConfigStr()
+  const runtimeConfigHash = hashRuntimeConfig(runtimeConfig)
+  if (
+    runtimeConfigHash === lastUploadedRuntimeConfigHash ||
+    runtimeConfigHash === uploadingRuntimeConfigHash
+  ) {
+    return
+  }
+
+  uploadingRuntimeConfigHash = runtimeConfigHash
+  try {
+    const uploaded = await uploadRuntimeConfigContent(runtimeConfig)
+    if (uploaded) {
+      lastUploadedRuntimeConfigHash = runtimeConfigHash
+    }
+  } finally {
+    if (uploadingRuntimeConfigHash === runtimeConfigHash) {
+      uploadingRuntimeConfigHash = undefined
+    }
+  }
+}
+
+export function scheduleRuntimeConfigUpload(): void {
+  if (runtimeConfigUploadTimer) {
+    clearTimeout(runtimeConfigUploadTimer)
+  }
+
+  runtimeConfigUploadTimer = setTimeout(() => {
+    runtimeConfigUploadTimer = undefined
+    runtimeConfigUploadQueue = runtimeConfigUploadQueue
+      .catch(() => {})
+      .then(async () => {
+        try {
+          await uploadRuntimeConfigIfChanged()
+        } catch (error) {
+          gistApiLogger.warn('Failed to sync runtime config to Gist', error)
+        }
+      })
+  }, 300)
 }
 
 export async function generateGistAgeKeyPair(): Promise<GistAgeKeyPair> {

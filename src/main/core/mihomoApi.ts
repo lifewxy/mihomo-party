@@ -416,6 +416,12 @@ export const mihomoHotReloadConfig = async (): Promise<void> => {
   const instance = await getAxios()
   await instance.put('/configs?force=true', { path: configPath })
   mihomoApiLogger.info('hot reload config completed')
+  try {
+    const { scheduleRuntimeConfigUpload } = await import('../resolve/gistApi')
+    scheduleRuntimeConfigUpload()
+  } catch (error) {
+    mihomoApiLogger.warn('Failed to schedule runtime config Gist sync', error)
+  }
 }
 
 // Smart 内核 API

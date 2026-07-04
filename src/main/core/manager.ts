@@ -24,7 +24,7 @@ import {
   mihomoWorkConfigPath,
   mihomoWorkDir
 } from '../utils/dirs'
-import { uploadRuntimeConfig } from '../resolve/gistApi'
+import { uploadRuntimeConfigIfChanged } from '../resolve/gistApi'
 import { startMonitor } from '../resolve/trafficMonitor'
 import { ensureRuntimeFiles, safeShowErrorBox } from '../utils/init'
 import { parseAgeSecretKeys } from '../utils/age'
@@ -361,9 +361,9 @@ function setupCoreListeners(
               try {
                 mainWindow?.webContents.send('groupsUpdated')
                 mainWindow?.webContents.send('rulesUpdated')
-                await uploadRuntimeConfig()
-              } catch {
-                // ignore
+                await uploadRuntimeConfigIfChanged()
+              } catch (error) {
+                managerLogger.warn('Failed to sync runtime config to Gist', error)
               }
               await patchMihomoConfig({ 'log-level': logLevel })
               innerResolve()
