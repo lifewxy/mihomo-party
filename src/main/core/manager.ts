@@ -1,10 +1,11 @@
 import { ChildProcess, execFile, spawn } from 'child_process'
-import { readFile, rm, writeFile } from 'fs/promises'
+import { randomUUID } from 'crypto'
+import { readFile, mkdir, rm, writeFile } from 'fs/promises'
 import { promisify } from 'util'
 import path from 'path'
 import os from 'os'
-import { existsSync } from 'fs'
-import chokidar, { FSWatcher } from 'chokidar'
+import { existsSync, watch, type FSWatcher as NodeFSWatcher } from 'fs'
+import chokidar, { type FSWatcher as ChokidarWatcher } from 'chokidar'
 import { app, ipcMain } from 'electron'
 import { mainWindow } from '../window'
 import {
@@ -77,6 +78,7 @@ export { getDefaultDevice } from './dns'
 
 const execFilePromise = promisify(execFile)
 const ctlParam = process.platform === 'win32' ? '-ext-ctl-pipe' : '-ext-ctl-unix'
+const coreHookTimeout = 30000
 
 // 核心进程状态
 let child: ChildProcess | null = null
@@ -84,10 +86,128 @@ let retry = 10
 let isRestarting = false
 
 // 文件监听器
-let coreWatcher: FSWatcher | null = null
+let coreWatcher: ChokidarWatcher | null = null
+
+type CoreStartupMode = 'log' | 'post-up'
+
+interface CoreStartupHook {
+  hookDir: string
+  upFile: string
+  upFileName: string
+  postUpCommand: string
+  postDownCommand: string
+}
+
+interface CoreHookWaiter {
+  promise: Promise<void>
+  attachProcess: (process: ChildProcess) => void
+}
 
 function hasCoreProcess(): boolean {
   return Boolean(child && !child.killed && child.exitCode === null && child.signalCode === null)
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`
+}
+
+function cmdQuote(value: string): string {
+  return `"${value.replace(/"/g, '""')}"`
+}
+
+function hookTouchCommand(file: string): string {
+  return process.platform === 'win32' ? `type nul > ${cmdQuote(file)}` : `: > ${shellQuote(file)}`
+}
+
+function coreHookDir(): string {
+  return path.join(dataDir(), 'core-hooks')
+}
+
+async function createCoreStartupHook(): Promise<CoreStartupHook> {
+  const runId = randomUUID()
+  const hookDir = coreHookDir()
+
+  await rm(hookDir, { recursive: true, force: true })
+  await mkdir(hookDir, { recursive: true })
+
+  const upFileName = `${runId}.up`
+  const downFileName = `${runId}.down`
+  const upFile = path.join(hookDir, upFileName)
+  const downFile = path.join(hookDir, downFileName)
+
+  return {
+    hookDir,
+    upFile,
+    upFileName,
+    postUpCommand: hookTouchCommand(upFile),
+    postDownCommand: hookTouchCommand(downFile)
+  }
+}
+
+function createCoreHookWaiter(hook: CoreStartupHook): CoreHookWaiter {
+  let watcher: NodeFSWatcher | undefined
+  let timer: NodeJS.Timeout | undefined
+  let attachedProcess: ChildProcess | undefined
+  let completed = false
+
+  let resolvePromise: () => void
+  let rejectPromise: (reason?: unknown) => void
+
+  const cleanup = (): void => {
+    if (timer) {
+      clearTimeout(timer)
+      timer = undefined
+    }
+    if (watcher) {
+      watcher.close()
+      watcher = undefined
+    }
+    if (attachedProcess) {
+      attachedProcess.off('close', handleClose)
+      attachedProcess = undefined
+    }
+  }
+
+  const complete = (error?: unknown): void => {
+    if (completed) return
+    completed = true
+    cleanup()
+    if (error) {
+      rejectPromise(error)
+    } else {
+      resolvePromise()
+    }
+  }
+
+  const handleClose = (code: number | null, signal: NodeJS.Signals | null): void => {
+    complete(new Error(`Core startup failed before post-up, code: ${code}, signal: ${signal}`))
+  }
+
+  const promise = new Promise<void>((resolve, reject) => {
+    resolvePromise = resolve
+    rejectPromise = reject
+
+    watcher = watch(hook.hookDir, (_eventType, filename) => {
+      const changedFile = filename?.toString()
+      if (changedFile === hook.upFileName || (!changedFile && existsSync(hook.upFile))) {
+        complete()
+      }
+    })
+
+    watcher.on('error', complete)
+
+    timer = setTimeout(() => {
+      complete(new Error(`Timed out waiting for core post-up: ${coreHookTimeout}ms`))
+    }, coreHookTimeout)
+  })
+
+  return {
+    promise,
+    attachProcess: (process) => {
+      attachedProcess = process
+      attachedProcess.once('close', handleClose)
+    }
+  }
 }
 
 async function stopPidFileCore(): Promise<void> {
@@ -176,6 +296,8 @@ interface CoreConfig {
   cpuPriority: string
   ageSecretKey?: string
   detached: boolean
+  startupMode: CoreStartupMode
+  startupHook?: CoreStartupHook
 }
 
 function buildCoreEnv(safePath?: string, ageSecretKey?: string): NodeJS.ProcessEnv {
@@ -203,7 +325,8 @@ async function prepareCore(detached: boolean, skipStop = false): Promise<CoreCon
     core = 'mihomo',
     autoSetDNS = true,
     diffWorkDir = false,
-    mihomoCpuPriority = 'PRIORITY_NORMAL'
+    mihomoCpuPriority = 'PRIORITY_NORMAL',
+    coreStartupMode = 'log'
   } = appConfig
 
   const { 'log-level': logLevel = 'info' as LogLevel, tun } = mihomoConfig
@@ -240,6 +363,10 @@ async function prepareCore(detached: boolean, skipStop = false): Promise<CoreCon
     await validateWindowsPipeAccess(ipcPath)
   }
 
+  const startupMode: CoreStartupMode = coreStartupMode === 'post-up' ? 'post-up' : 'log'
+  const startupHook =
+    !detached && startupMode === 'post-up' ? await createCoreStartupHook() : undefined
+
   return {
     corePath: mihomoCorePath(core),
     workDir: diffWorkDir ? mihomoProfileWorkDir(current) : mihomoWorkDir(),
@@ -250,15 +377,35 @@ async function prepareCore(detached: boolean, skipStop = false): Promise<CoreCon
     autoSetDNS,
     cpuPriority: mihomoCpuPriority,
     ageSecretKey,
-    detached
+    detached,
+    startupMode,
+    startupHook
   }
 }
 
 // 启动核心进程
 function spawnCoreProcess(config: CoreConfig): ChildProcess {
-  const { corePath, workDir, safePath, ipcPath, cpuPriority, ageSecretKey, detached } = config
+  const {
+    corePath,
+    workDir,
+    safePath,
+    ipcPath,
+    cpuPriority,
+    ageSecretKey,
+    detached,
+    startupMode,
+    startupHook
+  } = config
 
-  const proc = spawn(corePath, ['-d', workDir, ctlParam, ipcPath], {
+  const args = ['-d', workDir, ctlParam, ipcPath]
+  if (startupHook) {
+    args.push('-post-up', startupHook.postUpCommand, '-post-down', startupHook.postDownCommand)
+    managerLogger.info(`Core startup mode: post-up, post-up command: ${startupHook.postUpCommand}`)
+  } else if (!detached) {
+    managerLogger.info(`Core startup mode: ${startupMode}`)
+  }
+
+  const proc = spawn(corePath, args, {
     detached,
     stdio: detached ? 'ignore' : undefined,
     env: buildCoreEnv(safePath, ageSecretKey)
@@ -284,10 +431,36 @@ function spawnCoreProcess(config: CoreConfig): ChildProcess {
 // 设置核心进程事件监听
 function setupCoreListeners(
   proc: ChildProcess,
-  logLevel: LogLevel,
+  config: CoreConfig,
+  hookWaiter: CoreHookWaiter | undefined,
   resolve: (value: Promise<void>[]) => void,
   reject: (reason: unknown) => void
 ): void {
+  const { logLevel, startupMode } = config
+
+  const startMihomoApiStreams = async (): Promise<void> => {
+    await waitForCoreReady()
+    await getAxios(true)
+    await Promise.all([
+      startMihomoTraffic(),
+      startMihomoConnections(),
+      startMihomoLogs(),
+      startMihomoMemory()
+    ])
+    retry = 10
+  }
+
+  const completeCoreStartup = async (): Promise<void> => {
+    try {
+      mainWindow?.webContents.send('groupsUpdated')
+      mainWindow?.webContents.send('rulesUpdated')
+      await uploadRuntimeConfigIfChanged()
+    } catch (error) {
+      managerLogger.warn('Failed to sync runtime config to Gist', error)
+    }
+    await patchMihomoConfig({ 'log-level': logLevel })
+  }
+
   proc.on('close', async (code, signal) => {
     managerLogger.info(`Core closed, code: ${code}, signal: ${signal}`)
 
@@ -343,6 +516,10 @@ function setupCoreListeners(
       return
     }
 
+    if (startupMode === 'post-up') {
+      return
+    }
+
     // API 就绪
     const isApiReady =
       (process.platform !== 'win32' && str.includes('RESTful API unix listening at')) ||
@@ -358,37 +535,43 @@ function setupCoreListeners(
                 .toLowerCase()
                 .includes('start initial compatible provider default')
             ) {
-              try {
-                mainWindow?.webContents.send('groupsUpdated')
-                mainWindow?.webContents.send('rulesUpdated')
-                await uploadRuntimeConfigIfChanged()
-              } catch (error) {
-                managerLogger.warn('Failed to sync runtime config to Gist', error)
-              }
-              await patchMihomoConfig({ 'log-level': logLevel })
-              innerResolve()
+              completeCoreStartup()
+                .then(() => innerResolve())
+                .catch((error) => {
+                  managerLogger.warn('Failed to complete core startup', error)
+                  innerResolve()
+                })
             }
           })
         })
       ])
 
-      await waitForCoreReady()
-      await getAxios(true)
-      await Promise.all([
-        startMihomoTraffic(),
-        startMihomoConnections(),
-        startMihomoLogs(),
-        startMihomoMemory()
-      ])
-      retry = 10
+      await startMihomoApiStreams()
     }
   })
+
+  if (startupMode === 'post-up') {
+    if (!hookWaiter) {
+      reject(new Error('Core post-up startup mode requires a startup hook'))
+      return
+    }
+
+    hookWaiter.promise
+      .then(async () => {
+        managerLogger.info('Core post-up hook triggered')
+        await startMihomoApiStreams()
+        resolve([completeCoreStartup()])
+      })
+      .catch(reject)
+  }
 }
 
 // 启动核心
 export async function startCore(detached = false, skipStop = false): Promise<Promise<void>[]> {
   const config = await prepareCore(detached, skipStop)
+  const hookWaiter = config.startupHook ? createCoreHookWaiter(config.startupHook) : undefined
   const proc = spawnCoreProcess(config)
+  hookWaiter?.attachProcess(proc)
   child = proc
 
   if (detached) {
@@ -400,7 +583,7 @@ export async function startCore(detached = false, skipStop = false): Promise<Pro
   }
 
   return new Promise((resolve, reject) => {
-    setupCoreListeners(proc, config.logLevel, resolve, reject)
+    setupCoreListeners(proc, config, hookWaiter, resolve, reject)
   })
 }
 

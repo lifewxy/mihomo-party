@@ -329,6 +329,7 @@ interface IAppConfig {
   useProxyInSubStore?: boolean
   pluginUseProxy?: boolean // 插件网关请求经由本地混合端口代理（安全保证降级，默认关闭）
   mihomoCpuPriority?: Priority
+  coreStartupMode?: 'log' | 'post-up'
   customSubStoreUrl?: string
   diffWorkDir?: boolean
   autoSetDNS?: boolean

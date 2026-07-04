@@ -76,6 +76,7 @@ export const defaultConfig: IAppConfig = {
   showTproxyPort: DEFAULT_MIHOMO_PORTS.tproxy,
   enableTproxyPort: false,
   testProfileOnStart: true,
+  coreStartupMode: 'log',
   useHotReloadProfile: false,
   hotReloadProfileAutoCloseConnection: false
 }
