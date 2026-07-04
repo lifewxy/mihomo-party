@@ -111,15 +111,15 @@ function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`
 }
 
-function cmdQuote(value: string): string {
-  return `"${value.replace(/"/g, '""')}"`
-}
-
 function hookTouchCommand(file: string): string {
-  return process.platform === 'win32' ? `type nul > ${cmdQuote(file)}` : `: > ${shellQuote(file)}`
+  return process.platform === 'win32' ? `type nul > ${file}` : `: > ${shellQuote(file)}`
 }
 
 function coreHookDir(): string {
+  if (process.platform === 'win32' && process.env.ProgramData) {
+    return path.join(process.env.ProgramData, 'mihomo-party', 'core-hooks')
+  }
+
   return path.join(dataDir(), 'core-hooks')
 }
 
