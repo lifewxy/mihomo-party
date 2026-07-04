@@ -11,7 +11,9 @@ Related files:
 - Sign test vectors:
   [`src/main/resolve/plugin/__fixtures__/sign-vectors.json`](../../src/main/resolve/plugin/__fixtures__/sign-vectors.json)
 
-The old v1 document (`docs/机场插件服务端对接指南.md`) described the password/encrypted-container model. Do not use it for new integrations.
+During development there was an earlier v1 design (password + encrypted container).
+That design has been retired, and the current codebase does not include a v1
+implementation.
 
 ---
 
