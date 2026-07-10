@@ -610,6 +610,11 @@ interface IPluginDescriptorPreview {
   spec: string
 }
 
+interface IPluginFilePayload {
+  name: string
+  fileBytesB64: string
+}
+
 interface IGatewayEndpoints {
   enroll: string
   challenge: string

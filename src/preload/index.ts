@@ -176,7 +176,8 @@ const validListenChannels = [
   'groupsUpdated',
   'rulesUpdated',
   'updateDownloadProgress',
-  'pluginConfigUpdated'
+  'pluginConfigUpdated',
+  'openPluginFile'
 ] as const
 
 // 允许的 send channels 白名单

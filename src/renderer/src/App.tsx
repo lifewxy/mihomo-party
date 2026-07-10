@@ -38,13 +38,12 @@ import NetworkCard from '@renderer/components/sider/network-card'
 import UsageCard from '@renderer/components/sider/usage-card'
 import { useTrafficLogger } from '@renderer/hooks/use-traffic-logger'
 import { createTourDriver, getDriver, startTourIfNeeded } from '@renderer/utils/tour'
+import { hasPendingPluginFile, subscribePluginFile } from '@renderer/utils/plugin-file-open'
 import 'driver.js/dist/driver.css'
 import { useTranslation } from 'react-i18next'
 import { DEFAULT_ENABLE_TRAFFIC_LOGGER, DEFAULT_SIDER_ORDER } from '../../shared/appConfig'
 import MihomoIcon from './components/base/mihomo-icon'
 import { SIDER_CARD_ROUTES, getSiderCardByPath, mergeSiderOrder } from './utils/sider'
-
-let navigate: NavigateFunction
 
 export { getDriver }
 
@@ -73,9 +72,18 @@ const App: React.FC = () => {
   const tourInitialized = useRef(false)
   const sensors = useSensors(useSensor(PointerSensor))
   const { setTheme, systemTheme } = useTheme()
-  navigate = useNavigate()
+  const navigate: NavigateFunction = useNavigate()
   const location = useLocation()
   const page = useRoutes(routes)
+
+  useEffect(() => {
+    const openPluginImport = (): void => {
+      navigate('/profiles')
+    }
+    const unsubscribe = subscribePluginFile(openPluginImport)
+    if (hasPendingPluginFile()) openPluginImport()
+    return unsubscribe
+  }, [navigate])
 
   const setTitlebar = useCallback((): void => {
     if (!useWindowFrame && platform !== 'darwin') {
@@ -127,7 +135,7 @@ const App: React.FC = () => {
       createTourDriver(t, navigate)
       startTourIfNeeded()
     }
-  }, [t])
+  }, [t, navigate])
 
   useEffect(() => {
     setNativeTheme(appTheme)

@@ -44,6 +44,7 @@ import SubStoreIcon from '@renderer/components/base/substore-icon'
 import useSWR from 'swr'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { subscribePluginFile, takePendingPluginFile } from '@renderer/utils/plugin-file-open'
 import { DEFAULT_USE_SUB_STORE } from '../../../shared/appConfig'
 
 const Profiles: React.FC = () => {
@@ -82,6 +83,7 @@ const Profiles: React.FC = () => {
   const { pluginConfig, mutatePluginConfig } = usePluginConfig()
   const [showPluginImport, setShowPluginImport] = useState(false)
   const [pluginDropFile, setPluginDropFile] = useState<File | null>(null)
+  const [pluginFileData, setPluginFileData] = useState<IPluginFilePayload | null>(null)
   // bump per .cpx drop -> remount modal so it loads the new file even when open
   const [pluginDropSeq, setPluginDropSeq] = useState(0)
   const isUrlEmpty = url.trim() === ''
@@ -200,6 +202,20 @@ const Profiles: React.FC = () => {
     handleImportRef.current()
   }, [])
 
+  const openPendingPluginFile = useCallback((): void => {
+    const payload = takePendingPluginFile()
+    if (!payload) return
+    setPluginDropFile(null)
+    setPluginFileData(payload)
+    setPluginDropSeq((n) => n + 1)
+    setShowPluginImport(true)
+  }, [])
+
+  useEffect(() => {
+    openPendingPluginFile()
+    return subscribePluginFile(openPendingPluginFile)
+  }, [openPendingPluginFile])
+
   useEffect(() => {
     const element = pageRef.current
     if (!element) return
@@ -232,6 +248,7 @@ const Profiles: React.FC = () => {
           }
         } else if (name.endsWith('.cpx')) {
           // .cpx -> plugin install modal (preview + confirm)
+          setPluginFileData(null)
           setPluginDropFile(file)
           setPluginDropSeq((n) => n + 1)
           setShowPluginImport(true)
@@ -530,7 +547,15 @@ const Profiles: React.FC = () => {
                 {t('plugins.useProxy')}
               </Checkbox>
             </Tooltip>
-            <Button size="sm" color="primary" onPress={() => setShowPluginImport(true)}>
+            <Button
+              size="sm"
+              color="primary"
+              onPress={() => {
+                setPluginDropFile(null)
+                setPluginFileData(null)
+                setShowPluginImport(true)
+              }}
+            >
               {t('plugins.import')}
             </Button>
           </div>
@@ -546,9 +571,11 @@ const Profiles: React.FC = () => {
           <PluginInstallModal
             key={pluginDropSeq}
             initialFile={pluginDropFile ?? undefined}
+            initialData={pluginFileData ?? undefined}
             onClose={() => {
               setShowPluginImport(false)
               setPluginDropFile(null)
+              setPluginFileData(null)
               mutatePluginConfig()
             }}
           />

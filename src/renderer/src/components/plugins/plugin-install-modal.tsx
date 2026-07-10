@@ -7,6 +7,7 @@ import { previewPlugin, installPlugin } from '@renderer/utils/ipc'
 interface Props {
   onClose: () => void
   initialFile?: File // dropped file: auto-load + preview on open
+  initialData?: IPluginFilePayload // associated file: already read by the main process
 }
 
 const MAX_CPX_BYTES = 10 * 1024 * 1024 // guard against a huge mis-dropped file freezing the renderer
@@ -26,7 +27,7 @@ function hostOf(url: string): string {
   }
 }
 
-const PluginInstallModal: React.FC<Props> = ({ onClose, initialFile }) => {
+const PluginInstallModal: React.FC<Props> = ({ onClose, initialFile, initialData }) => {
   const { t } = useTranslation()
   const fileInput = useRef<HTMLInputElement>(null)
   const [fileName, setFileName] = useState('')
@@ -76,6 +77,12 @@ const PluginInstallModal: React.FC<Props> = ({ onClose, initialFile }) => {
   }
 
   useEffect(() => {
+    if (initialData) {
+      setFileName(initialData.name)
+      setFileB64(initialData.fileBytesB64)
+      previewB64(initialData.fileBytesB64)
+      return
+    }
     if (!initialFile) return
     loadFile(initialFile).then((b64) => {
       if (b64) previewB64(b64)

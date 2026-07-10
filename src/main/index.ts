@@ -30,6 +30,7 @@ import {
   closeMainWindow
 } from './window'
 import { findDeepLink, handleDeepLink } from './deeplink'
+import { findPluginFile, readPluginFile } from './resolve/plugin/file'
 import {
   fixUserDataPermissions,
   setupPlatformSpecifics,
@@ -119,30 +120,66 @@ async function initHardwareAcceleration(): Promise<void> {
 initHardwareAcceleration()
 setupAppLifecycle()
 
-let deepLinksReady = false
-let pendingDeepLinks: string[] = []
-let deepLinkChain = Promise.resolve()
+type LaunchTarget = { type: 'deep-link' | 'plugin-file'; value: string }
 
-function dispatchDeepLink(url: string): void {
-  if (!deepLinksReady) {
-    if (!pendingDeepLinks.includes(url)) pendingDeepLinks.push(url)
+let launchTargetsReady = false
+let pendingLaunchTargets: LaunchTarget[] = []
+let launchTargetChain = Promise.resolve()
+
+function queueLaunchTarget(target: LaunchTarget): void {
+  if (!launchTargetsReady) {
+    const duplicate = pendingLaunchTargets.some(
+      (pending) => pending.type === target.type && pending.value === target.value
+    )
+    if (!duplicate) pendingLaunchTargets.push(target)
     return
   }
-  deepLinkChain = deepLinkChain
+
+  launchTargetChain = launchTargetChain
     .then(async () => {
-      showMainWindow()
-      await handleDeepLink(url)
+      if (target.type === 'deep-link') {
+        showMainWindow()
+        await handleDeepLink(target.value)
+        return
+      }
+
+      try {
+        await createWindow()
+        const window = mainWindow
+        if (!window || window.isDestroyed()) throw new Error('Main window is unavailable')
+        const rendererReady =
+          window.webContents.isLoadingMainFrame() || window.webContents.getURL() === ''
+            ? new Promise<void>((resolve) => window.webContents.once('did-finish-load', resolve))
+            : Promise.resolve()
+        showMainWindow()
+        const payload = await readPluginFile(target.value)
+        await rendererReady
+        window.webContents.send('openPluginFile', payload)
+      } catch (e) {
+        safeShowErrorBox('plugins.previewFailed', `${e}`)
+      }
     })
     .catch((e) => safeShowErrorBox('common.error.default', `${e}`))
 }
 
 app.on('second-instance', (_event, commandline) => {
   const url = findDeepLink(commandline)
-  if (url) dispatchDeepLink(url)
+  if (url) {
+    queueLaunchTarget({ type: 'deep-link', value: url })
+    return
+  }
+  const pluginFile = findPluginFile(commandline)
+  if (pluginFile) queueLaunchTarget({ type: 'plugin-file', value: pluginFile })
 })
 
 app.on('open-url', (_event, url) => {
-  dispatchDeepLink(url)
+  queueLaunchTarget({ type: 'deep-link', value: url })
+})
+
+app.on('open-file', (event, filePath) => {
+  event.preventDefault()
+  const pluginFile = findPluginFile([filePath])
+  if (pluginFile) queueLaunchTarget({ type: 'plugin-file', value: pluginFile })
 })
 
 const initPromise = (async () => {
@@ -262,17 +299,22 @@ app.whenReady().then(async () => {
 
   await createWindowPromise
 
-  // macOS delivers cold-start links through open-url; Windows/Linux put them in argv.
+  // macOS delivers cold-start targets through open-url/open-file; Windows/Linux put them in argv.
   if (process.platform !== 'darwin') {
     const initialDeepLink = findDeepLink(process.argv)
-    if (initialDeepLink && !pendingDeepLinks.includes(initialDeepLink)) {
-      pendingDeepLinks.unshift(initialDeepLink)
+    if (initialDeepLink) {
+      queueLaunchTarget({ type: 'deep-link', value: initialDeepLink })
+    } else {
+      const initialPluginFile = findPluginFile(process.argv)
+      if (initialPluginFile) {
+        queueLaunchTarget({ type: 'plugin-file', value: initialPluginFile })
+      }
     }
   }
-  deepLinksReady = true
-  const queuedDeepLinks = pendingDeepLinks
-  pendingDeepLinks = []
-  queuedDeepLinks.forEach(dispatchDeepLink)
+  launchTargetsReady = true
+  const queuedLaunchTargets = pendingLaunchTargets
+  pendingLaunchTargets = []
+  queuedLaunchTargets.forEach(queueLaunchTarget)
 
   void startSubStoreServices().catch((e) =>
     mainLogger.warn('Failed to start sub-store services', e)

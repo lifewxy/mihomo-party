@@ -23,6 +23,12 @@ protocols:
   schemes:
     - 'clash'
     - 'mihomo'
+fileAssociations:
+  - ext: 'cpx'
+    name: 'Clash Party Plugin'
+    description: 'Clash Party airport plugin descriptor'
+    mimeType: 'application/x-clash-party-plugin'
+    role: 'Viewer'
 win:
   target:
     - nsis
