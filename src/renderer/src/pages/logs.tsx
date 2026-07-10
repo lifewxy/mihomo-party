@@ -9,6 +9,8 @@ import { useTranslation } from 'react-i18next'
 import { includesIgnoreCase } from '@renderer/utils/includes'
 
 const LOGS_FILTER_KEY = 'logs-filter'
+const MAX_CACHED_LOGS = 500
+const LOG_RENDER_INTERVAL_MS = 100
 
 const cachedLogs: {
   log: IMihomoLogInfo[]
@@ -23,6 +25,25 @@ const cachedLogs: {
       this.trigger(this.log)
     }
   }
+}
+
+const onLog = (_e: unknown, ...args: unknown[]): void => {
+  const log = args[0] as IMihomoLogInfo
+  log.time = new Date().toLocaleString()
+  cachedLogs.log.push(log)
+  if (cachedLogs.log.length > MAX_CACHED_LOGS) {
+    cachedLogs.log.splice(0, cachedLogs.log.length - MAX_CACHED_LOGS)
+  }
+  cachedLogs.trigger?.(cachedLogs.log)
+}
+
+// Keep a bounded renderer-session history, including while the logs page is hidden.
+window.electron.ipcRenderer.on('mihomoLogs', onLog)
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    window.electron.ipcRenderer.removeListener('mihomoLogs', onLog)
+  })
 }
 
 const Logs: React.FC = () => {
@@ -48,24 +69,21 @@ const Logs: React.FC = () => {
 
   useEffect(() => {
     const old = cachedLogs.trigger
-    cachedLogs.trigger = (a): void => {
-      setLogs([...a])
+    let renderTimer: ReturnType<typeof setTimeout> | null = null
+
+    cachedLogs.trigger = (): void => {
+      if (renderTimer !== null) return
+      renderTimer = setTimeout(() => {
+        renderTimer = null
+        setLogs([...cachedLogs.log])
+      }, LOG_RENDER_INTERVAL_MS)
     }
-    const onLog = (_e: unknown, ...args: unknown[]): void => {
-      const log = args[0] as IMihomoLogInfo
-      log.time = new Date().toLocaleString()
-      cachedLogs.log.push(log)
-      if (cachedLogs.log.length >= 500) {
-        cachedLogs.log.shift()
-      }
-      if (cachedLogs.trigger !== null) {
-        cachedLogs.trigger(cachedLogs.log)
-      }
-    }
-    window.electron.ipcRenderer.on('mihomoLogs', onLog)
+
     return (): void => {
       cachedLogs.trigger = old
-      window.electron.ipcRenderer.removeListener('mihomoLogs', onLog)
+      if (renderTimer !== null) {
+        clearTimeout(renderTimer)
+      }
     }
   }, [])
 
