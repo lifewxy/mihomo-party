@@ -3,17 +3,16 @@ import TrafficRankings from '@renderer/components/traffic/traffic-rankings'
 import TrafficTrendChart from '@renderer/components/traffic/traffic-trend-chart'
 import TrafficDetailsTable from '@renderer/components/traffic/traffic-details-table'
 import {
-  getAggregatedData,
+  getTrafficOverview,
   getSubStatsByHost,
   getDevicesByHost,
   getProxyStatsByHost,
-  getTrafficTrend,
   type AggregatedData,
   type DataUsageType
 } from '@renderer/utils/dataUsage'
 import { db } from '@renderer/utils/db'
 import { Button, Tab, Tabs } from '@heroui/react'
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { calcTraffic } from '@renderer/utils/calc'
 import { CgTrash } from 'react-icons/cg'
@@ -21,6 +20,7 @@ import { CgTrash } from 'react-icons/cg'
 type TimeRange = '1h' | '24h' | '7d' | '30d'
 
 const TIME_RANGES: TimeRange[] = ['1h', '24h', '7d', '30d']
+const AUTO_REFRESH_INTERVAL_MS = 5000
 
 function getTimeRange(range: TimeRange): { start: number; end: number; bucketSizeMs: number } {
   const end = Date.now()
@@ -53,38 +53,65 @@ const TrafficPage: React.FC = () => {
   const [selectedSubRow, setSelectedSubRow] = useState<string | null>(null)
   const [totalStats, setTotalStats] = useState({ upload: 0, download: 0, total: 0, count: 0 })
   const [bucketSizeMs, setBucketSizeMs] = useState(60 * 60 * 1000)
+  const loadGenerationRef = useRef(0)
 
-  const load = useCallback(async () => {
-    const { start, end, bucketSizeMs: bms } = getTimeRange(timeRange)
-    setBucketSizeMs(bms)
+  const load = useCallback(
+    async (
+      resetSelection = true,
+      generation = loadGenerationRef.current,
+      isCancelled: () => boolean = () => false
+    ) => {
+      const { start, end, bucketSizeMs: bms } = getTimeRange(timeRange)
+      const { rankings: agg, trend } = await getTrafficOverview(activeView, start, end, bms)
 
-    const [agg, trend] = await Promise.all([
-      getAggregatedData(activeView, start, end),
-      getTrafficTrend(start, end, bms)
-    ])
+      if (isCancelled() || generation !== loadGenerationRef.current) return
 
-    setRankings(agg)
-    setTrendData(trend)
-    setTotalStats(
-      agg.reduce(
-        (acc, r) => ({
-          upload: acc.upload + r.upload,
-          download: acc.download + r.download,
-          total: acc.total + r.total,
-          count: acc.count + r.count
-        }),
-        { upload: 0, download: 0, total: 0, count: 0 }
+      setBucketSizeMs(bms)
+      setRankings(agg)
+      setTrendData(trend)
+      setTotalStats(
+        agg.reduce(
+          (acc, r) => ({
+            upload: acc.upload + r.upload,
+            download: acc.download + r.download,
+            total: acc.total + r.total,
+            count: acc.count + r.count
+          }),
+          { upload: 0, download: 0, total: 0, count: 0 }
+        )
       )
-    )
 
-    setSelectedRow(null)
-    setSubStats([])
-    setProxyStatsMap({})
-    setSelectedSubRow(null)
-  }, [activeView, timeRange])
+      if (resetSelection) {
+        setSelectedRow(null)
+        setSubStats([])
+        setProxyStatsMap({})
+        setSelectedSubRow(null)
+      }
+    },
+    [activeView, timeRange]
+  )
 
   useEffect(() => {
-    load()
+    const generation = ++loadGenerationRef.current
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null
+    let cancelled = false
+
+    const refresh = async (resetSelection: boolean): Promise<void> => {
+      await load(resetSelection, generation, () => cancelled)
+      if (cancelled || generation !== loadGenerationRef.current) return
+      refreshTimer = setTimeout(() => {
+        void refresh(false)
+      }, AUTO_REFRESH_INTERVAL_MS)
+    }
+
+    void refresh(true)
+
+    return () => {
+      cancelled = true
+      if (refreshTimer !== null) {
+        clearTimeout(refreshTimer)
+      }
+    }
   }, [load])
 
   const handleSelectRow = useCallback(

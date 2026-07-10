@@ -77,6 +77,37 @@ export class DataUsageDB {
     })
   }
 
+  async iterate(
+    startTime: number,
+    endTime: number,
+    callback: (log: DataUsageLog) => void
+  ): Promise<void> {
+    const db = await this.open()
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([STORE_NAME], 'readonly')
+      const index = tx.objectStore(STORE_NAME).index('timestamp')
+      const request = index.openCursor(IDBKeyRange.bound(startTime, endTime))
+
+      request.onsuccess = (event) => {
+        const cursor = (event.target as IDBRequest<IDBCursorWithValue>).result
+        if (!cursor) return
+
+        try {
+          callback(cursor.value as DataUsageLog)
+          cursor.continue()
+        } catch (error) {
+          tx.abort()
+          reject(error)
+        }
+      }
+
+      request.onerror = () => reject(request.error)
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+      tx.onabort = () => reject(tx.error)
+    })
+  }
+
   async clearAll(): Promise<void> {
     const db = await this.open()
     return new Promise((resolve, reject) => {
