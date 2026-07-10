@@ -15,9 +15,10 @@ import { generateDevice } from './device'
 import { enroll, fetchConfig, revoke, GatewayError, type GatewayTarget } from './gateway'
 import { writeVault, readVault, removeVault } from './vault'
 import { computeBackoff } from './backoff'
+import { MAX_PLUGIN_FILE_BYTES } from './constants'
+import { fetchRemotePlugin } from './remote'
 
 const DEFAULT_PLUGIN_INTERVAL_MIN = 1440 // 24h
-const MAX_PLUGIN_FILE_BYTES = 1024 * 1024
 
 function notifyRenderer(): void {
   mainWindow?.webContents.send('pluginConfigUpdated')
@@ -77,6 +78,10 @@ export async function installPlugin(fileBytesB64: string): Promise<IPluginItem> 
   await addPluginItem(record)
   notifyRenderer()
   return record
+}
+
+export async function installRemotePlugin(url: string): Promise<IPluginItem> {
+  return installPlugin(await fetchRemotePlugin(url))
 }
 
 // 写订阅 profile + 回填 profileId + 置 active + 清失败状态（首次登录与复用设备登录共用）

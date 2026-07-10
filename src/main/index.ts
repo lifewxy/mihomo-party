@@ -29,7 +29,7 @@ import {
   triggerMainWindow,
   closeMainWindow
 } from './window'
-import { handleDeepLink } from './deeplink'
+import { findDeepLink, handleDeepLink } from './deeplink'
 import {
   fixUserDataPermissions,
   setupPlatformSpecifics,
@@ -119,17 +119,30 @@ async function initHardwareAcceleration(): Promise<void> {
 initHardwareAcceleration()
 setupAppLifecycle()
 
-app.on('second-instance', async (_event, commandline) => {
-  showMainWindow()
-  const url = commandline.pop()
-  if (url) {
-    await handleDeepLink(url)
+let deepLinksReady = false
+let pendingDeepLinks: string[] = []
+let deepLinkChain = Promise.resolve()
+
+function dispatchDeepLink(url: string): void {
+  if (!deepLinksReady) {
+    if (!pendingDeepLinks.includes(url)) pendingDeepLinks.push(url)
+    return
   }
+  deepLinkChain = deepLinkChain
+    .then(async () => {
+      showMainWindow()
+      await handleDeepLink(url)
+    })
+    .catch((e) => safeShowErrorBox('common.error.default', `${e}`))
+}
+
+app.on('second-instance', (_event, commandline) => {
+  const url = findDeepLink(commandline)
+  if (url) dispatchDeepLink(url)
 })
 
-app.on('open-url', async (_event, url) => {
-  showMainWindow()
-  await handleDeepLink(url)
+app.on('open-url', (_event, url) => {
+  dispatchDeepLink(url)
 })
 
 const initPromise = (async () => {
@@ -248,6 +261,18 @@ app.whenReady().then(async () => {
   })()
 
   await createWindowPromise
+
+  // macOS delivers cold-start links through open-url; Windows/Linux put them in argv.
+  if (process.platform !== 'darwin') {
+    const initialDeepLink = findDeepLink(process.argv)
+    if (initialDeepLink && !pendingDeepLinks.includes(initialDeepLink)) {
+      pendingDeepLinks.unshift(initialDeepLink)
+    }
+  }
+  deepLinksReady = true
+  const queuedDeepLinks = pendingDeepLinks
+  pendingDeepLinks = []
+  queuedDeepLinks.forEach(dispatchDeepLink)
 
   void startSubStoreServices().catch((e) =>
     mainLogger.warn('Failed to start sub-store services', e)
