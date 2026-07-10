@@ -137,6 +137,17 @@ Generator:
 node scripts/plugin/gen-cpx.mjs <loginUrl> <providerName> [site] [output]
 ```
 
+### Distribution Options
+
+- **File download**: Distribute the `.cpx` file directly. Clients with the file association registered can launch the app by double-clicking the file and will see the plugin preview and confirmation page.
+- **Deep link**: Host the same `.cpx` file at a public HTTPS URL, then use the following link in a web button or QR code:
+
+  ```text
+  clash://install-plugin?url=https%3A%2F%2Fprovider.example.com%2Fapp.cpx
+  ```
+
+  `mihomo://` is equivalent to `clash://`. URL-encode the `url` parameter. The client downloads and validates the file, installs the plugin, and opens the system browser for login. The download URL must use public HTTPS, redirects are rejected, and the file must not exceed 1 MiB.
+
 ---
 
 ## 4. OAuth Authorize
