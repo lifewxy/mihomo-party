@@ -55,7 +55,8 @@ import {
   cleanupSocketFile,
   cleanupWindowsNamedPipes,
   validateWindowsPipeAccess,
-  waitForCoreReady
+  waitForCoreReady,
+  verifyProcessOwner
 } from './process'
 import { setPublicDNS, recoverDNS } from './dns'
 
@@ -81,6 +82,7 @@ const execFilePromise = promisify(execFile)
 const ctlParam = process.platform === 'win32' ? '-ext-ctl-pipe' : '-ext-ctl-unix'
 const coreHookTimeout = 30000
 const automaticRestartDelay = 750
+const coreProcessNames = ['mihomo', 'mihomo-alpha', 'mihomo-smart'] as const
 
 // 核心进程状态
 interface CoreProcessWatchdog {
@@ -326,24 +328,27 @@ async function stopPidFileCore(): Promise<void> {
   const pid = parseInt(pidString.trim())
   if (!isNaN(pid)) {
     try {
-      process.kill(pid, 0)
-      process.kill(pid, 'SIGINT')
-      const deadline = Date.now() + 500
-      let stillRunning = true
-      while (stillRunning && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 50))
-        try {
-          process.kill(pid, 0)
-        } catch {
-          stillRunning = false
+      if (await verifyProcessOwner(pid, coreProcessNames)) {
+        process.kill(pid, 'SIGINT')
+        const deadline = Date.now() + 500
+        let stillRunning = true
+        while (stillRunning && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 50))
+          try {
+            process.kill(pid, 0)
+          } catch {
+            stillRunning = false
+          }
         }
-      }
-      if (stillRunning) {
-        try {
-          process.kill(pid, 'SIGKILL')
-        } catch {
-          // ignore
+        if (stillRunning) {
+          try {
+            process.kill(pid, 'SIGKILL')
+          } catch {
+            // ignore
+          }
         }
+      } else {
+        managerLogger.info(`PID ${pid} is not a known mihomo process, skipping kill`)
       }
     } catch {
       // ignore

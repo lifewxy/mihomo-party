@@ -169,3 +169,45 @@ export async function waitForCoreReady(): Promise<void> {
     }
   }
 }
+
+function normalizeProcessName(name: string): string {
+  return name
+    .trim()
+    .replace(/\.exe$/i, '')
+    .toLowerCase()
+}
+
+export async function verifyProcessOwner(
+  pid: number,
+  expectedNames: readonly string[]
+): Promise<boolean> {
+  try {
+    process.kill(pid, 0)
+  } catch {
+    return false
+  }
+
+  try {
+    let processName = ''
+    if (process.platform === 'win32') {
+      const { stdout } = await execFilePromise(
+        'tasklist',
+        ['/FI', `PID eq ${pid}`, '/FO', 'CSV', '/NH'],
+        { windowsHide: true, timeout: 1000 }
+      )
+      const match = stdout.match(/^"([^"]+)","(\d+)"/m)
+      if (!match || parseInt(match[2], 10) !== pid) return false
+      processName = match[1]
+    } else {
+      const { stdout } = await execFilePromise('ps', ['-p', `${pid}`, '-o', 'comm='], {
+        timeout: 1000
+      })
+      processName = stdout.trim().split(/\r?\n/, 1)[0] || ''
+    }
+
+    const normalizedName = normalizeProcessName(processName)
+    return expectedNames.some((name) => normalizeProcessName(name) === normalizedName)
+  } catch {
+    return false
+  }
+}
