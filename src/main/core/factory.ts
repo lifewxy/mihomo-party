@@ -164,11 +164,6 @@ export async function generateProfile(
       addedProxyServerRouteExcludes
     )
   }
-  // 确保可以拿到基础日志信息
-  // 使用 debug 可以调试内核相关问题 `debug/pprof`
-  if (['info', 'debug'].includes(profile['log-level']) === false) {
-    profile['log-level'] = 'info'
-  }
   // 删除空的局域网允许列表，避免局域网访问异常
   if (!profile['lan-allowed-ips']?.length) {
     delete profile['lan-allowed-ips']
@@ -185,12 +180,18 @@ export async function generateProfile(
     delete partialProfile['external-ui-url']
   }
   const nextRuntimeConfigStr = stringify(profile)
+  const coreProfile = { ...profile }
+  // 日志解析启动检测需要基础日志；预览和 Gist 保留用户的实际配置。
+  if (['info', 'debug'].includes(coreProfile['log-level']) === false) {
+    coreProfile['log-level'] = 'info'
+  }
+  const coreConfigStr = stringify(coreProfile)
   if (diffWorkDir) {
     await prepareProfileWorkDir(current)
   }
   await atomicWriteFile(
     diffWorkDir ? mihomoWorkConfigPath(current) : mihomoWorkConfigPath('work'),
-    nextRuntimeConfigStr
+    coreConfigStr
   )
   runtimeConfig = profile
   runtimeConfigStr = nextRuntimeConfigStr
