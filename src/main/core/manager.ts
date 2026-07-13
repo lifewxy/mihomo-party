@@ -82,6 +82,7 @@ const coreHookTimeout = 30000
 
 // 核心进程状态
 let child: ChildProcess | null = null
+let coreWatchdog: ChildProcess | null = null
 let retry = 10
 let isRestarting = false
 
@@ -574,6 +575,14 @@ export async function startCore(detached = false, skipStop = false): Promise<Pro
   hookWaiter?.attachProcess(proc)
   child = proc
 
+  if (process.platform === 'linux' && !detached) {
+    coreWatchdog = spawn('sh', ['-c', `cat > /dev/null; kill -9 ${proc.pid} 2>/dev/null`], {
+      stdio: ['pipe', 'ignore', 'ignore'],
+      detached: true
+    })
+    coreWatchdog.unref()
+  }
+
   if (detached) {
     managerLogger.info(
       `Core process detached successfully on ${process.platform}, PID: ${proc.pid}`
@@ -601,6 +610,15 @@ export async function stopCore(force = false): Promise<void> {
     child.removeAllListeners()
     child.kill('SIGINT')
     child = null
+  }
+
+  if (coreWatchdog && coreWatchdog.pid) {
+    try {
+      process.kill(-coreWatchdog.pid, 'SIGKILL')
+    } catch (e) {
+      // Ignore
+    }
+    coreWatchdog = null
   }
 
   stopMihomoTraffic()
