@@ -1,4 +1,4 @@
-import { access, readFile, rm, unlink, writeFile } from 'fs/promises'
+import { access, readFile, rm, unlink } from 'fs/promises'
 import { constants, existsSync } from 'fs'
 import { exec, execFile } from 'child_process'
 import { isAbsolute, join, relative, resolve } from 'path'
@@ -25,6 +25,7 @@ import {
   profilePath
 } from '../utils/dirs'
 import { createLogger } from '../utils/logger'
+import { atomicWriteFile, WriteQueue } from '../utils/safeFile'
 import { getAppConfig } from './app'
 import { getControledMihomoConfig } from './controledMihomo'
 
@@ -32,7 +33,7 @@ const profileLogger = createLogger('Profile')
 const execFilePromise = promisify(execFile)
 
 let profileConfig: IProfileConfig
-let profileConfigWriteQueue: Promise<void> = Promise.resolve()
+const profileConfigWriteQueue = new WriteQueue()
 let changeProfileQueue: Promise<void> = Promise.resolve()
 // 并发去重
 const inflightRemoteFetches = new Map<string, Promise<IProfileItem>>()
@@ -98,28 +99,28 @@ export async function getProfileConfig(force = false): Promise<IProfileConfig> {
 }
 
 export async function setProfileConfig(config: IProfileConfig): Promise<void> {
-  profileConfigWriteQueue = profileConfigWriteQueue.then(async () => {
-    profileConfig = config
-    await writeFile(profileConfigPath(), stringify(config), 'utf-8')
+  await profileConfigWriteQueue.run(async () => {
+    const nextConfig = JSON.parse(JSON.stringify(config)) as IProfileConfig
+    await atomicWriteFile(profileConfigPath(), stringify(nextConfig), { encoding: 'utf8' })
+    profileConfig = nextConfig
   })
-  await profileConfigWriteQueue
 }
 
 export async function updateProfileConfig(
   updater: (config: IProfileConfig) => IProfileConfig | Promise<IProfileConfig>
 ): Promise<IProfileConfig> {
-  let result: IProfileConfig | undefined
-  profileConfigWriteQueue = profileConfigWriteQueue.then(async () => {
+  return await profileConfigWriteQueue.run(async () => {
     const data = await readFile(profileConfigPath(), 'utf-8')
-    profileConfig = parse(data) || { items: [] }
-    if (typeof profileConfig !== 'object') profileConfig = { items: [] }
-    if (!Array.isArray(profileConfig.items)) profileConfig.items = []
-    profileConfig = await updater(JSON.parse(JSON.stringify(profileConfig)))
-    result = profileConfig
-    await writeFile(profileConfigPath(), stringify(profileConfig), 'utf-8')
+    const currentConfig = (parse(data) || { items: [] }) as IProfileConfig
+    if (typeof currentConfig !== 'object') {
+      throw new Error('Profile config is invalid')
+    }
+    if (!Array.isArray(currentConfig.items)) currentConfig.items = []
+    const nextConfig = await updater(JSON.parse(JSON.stringify(currentConfig)))
+    await atomicWriteFile(profileConfigPath(), stringify(nextConfig), { encoding: 'utf8' })
+    profileConfig = nextConfig
+    return JSON.parse(JSON.stringify(nextConfig)) as IProfileConfig
   })
-  await profileConfigWriteQueue
-  return JSON.parse(JSON.stringify(result ?? profileConfig))
 }
 
 export async function getProfileItem(id: string | undefined): Promise<IProfileItem | undefined> {
@@ -555,7 +556,7 @@ export async function getProfileStr(id: string | undefined): Promise<string> {
 export async function setProfileStr(id: string, content: string): Promise<void> {
   // 读取最新的配置
   const { current } = await getProfileConfig(true)
-  await writeFile(profilePath(id), content, 'utf-8')
+  await atomicWriteFile(profilePath(id), content, { encoding: 'utf8' })
   if (current === id) {
     try {
       await mihomoHotReloadConfig()
@@ -652,12 +653,12 @@ export async function setFileStr(path: string, content: string): Promise<void> {
   const { diffWorkDir = false } = await getAppConfig()
   const { current } = await getProfileConfig()
   if (isAbsolutePath(path)) {
-    await writeFile(path, content, 'utf-8')
+    await atomicWriteFile(path, content, { encoding: 'utf8' })
   } else {
-    await writeFile(
+    await atomicWriteFile(
       join(diffWorkDir ? mihomoProfileWorkDir(current) : mihomoWorkDir(), path),
       content,
-      'utf-8'
+      { encoding: 'utf8' }
     )
   }
 }

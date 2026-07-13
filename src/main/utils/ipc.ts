@@ -1,6 +1,6 @@
 import path from 'path'
 import v8 from 'v8'
-import { readFile, writeFile } from 'fs/promises'
+import { readFile } from 'fs/promises'
 import { app, ipcMain } from 'electron'
 import i18next from 'i18next'
 import {
@@ -137,6 +137,7 @@ import { getIconDataURL } from './icon'
 import { getAppName } from './appName'
 import { logDir, rulePath } from './dirs'
 import { installMihomoCore, getGitHubTags, clearVersionCache } from './github'
+import { atomicWriteFile } from './safeFile'
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AsyncFn = (...args: any[]) => Promise<any>
@@ -188,7 +189,7 @@ async function getRuleStr(id: string): Promise<string> {
 }
 
 async function setRuleStr(id: string, str: string): Promise<void> {
-  await writeFile(rulePath(id), str, 'utf-8')
+  await atomicWriteFile(rulePath(id), str, { encoding: 'utf8' })
 }
 
 async function getSmartOverrideContent(): Promise<string | null> {

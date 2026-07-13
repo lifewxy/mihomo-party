@@ -1,4 +1,3 @@
-import { writeFile } from 'fs/promises'
 import { createHash } from 'crypto'
 import { dialog } from 'electron'
 import * as chromeRequest from '../utils/chromeRequest'
@@ -8,6 +7,7 @@ import { DEFAULT_MIHOMO_PORTS } from '../../shared/appConfig'
 import { getRuntimeConfigStr } from '../core/factory'
 import { encryptAgeContent, generateAgeKeyPair } from '../utils/age'
 import { createLogger } from '../utils/logger'
+import { atomicWriteFile } from '../utils/safeFile'
 
 interface GistInfo {
   id: string
@@ -203,6 +203,6 @@ export async function exportGistAgeSecretKey(): Promise<boolean> {
 
   if (canceled || !filePath) return false
 
-  await writeFile(filePath, `${gistAgeSecretKey.trim()}\n`, 'utf-8')
+  await atomicWriteFile(filePath, `${gistAgeSecretKey.trim()}\n`, { encoding: 'utf8', mode: 0o600 })
   return true
 }

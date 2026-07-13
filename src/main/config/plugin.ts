@@ -1,10 +1,11 @@
-import { readFile, writeFile } from 'fs/promises'
+import { readFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { pluginConfigPath } from '../utils/dirs'
+import { atomicWriteFile, WriteQueue } from '../utils/safeFile'
 import { parse, stringify } from '../utils/yaml'
 
 let pluginConfig: IPluginConfig | undefined
-let writeQueue: Promise<void> = Promise.resolve()
+const writeQueue = new WriteQueue()
 
 export async function getPluginConfig(force = false): Promise<IPluginConfig> {
   if (force || !pluginConfig) {
@@ -21,16 +22,12 @@ export async function getPluginConfig(force = false): Promise<IPluginConfig> {
 }
 
 async function update(updater: (c: IPluginConfig) => IPluginConfig): Promise<void> {
-  const run = writeQueue.then(async () => {
+  await writeQueue.run(async () => {
     const current = await getPluginConfig(true)
     const next = updater(current)
+    await atomicWriteFile(pluginConfigPath(), stringify(next), { encoding: 'utf8' })
     pluginConfig = next
-    await writeFile(pluginConfigPath(), stringify(next), 'utf-8')
   })
-  // Keep the queue chain settled so a rejected op doesn't poison later writes,
-  // but still surface this op's error/result to the caller via `run`.
-  writeQueue = run.catch(() => {})
-  await run
 }
 
 export async function getPluginItem(id: string): Promise<IPluginItem | undefined> {

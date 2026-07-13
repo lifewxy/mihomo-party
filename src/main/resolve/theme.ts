@@ -1,4 +1,4 @@
-import { copyFile, readdir, readFile, writeFile } from 'fs/promises'
+import { copyFile, readdir, readFile } from 'fs/promises'
 import path from 'path'
 import { existsSync } from 'fs'
 import AdmZip from 'adm-zip'
@@ -8,6 +8,7 @@ import * as chromeRequest from '../utils/chromeRequest'
 import { getControledMihomoConfig } from '../config'
 import { DEFAULT_MIHOMO_PORTS } from '../../shared/appConfig'
 import { mainWindow } from '../window'
+import { atomicWriteFile } from '../utils/safeFile'
 import { floatingWindow } from './floatingWindow'
 
 let insertedCSSKeyMain: string | undefined = undefined
@@ -66,7 +67,7 @@ export async function readTheme(theme: string): Promise<string> {
 }
 
 export async function writeTheme(theme: string, css: string): Promise<void> {
-  await writeFile(path.join(themesDir(), theme), css)
+  await atomicWriteFile(path.join(themesDir(), theme), css)
 }
 
 export async function applyTheme(theme: string): Promise<void> {

@@ -1,7 +1,8 @@
-import { mkdir, writeFile, readFile, rm, rename } from 'fs/promises'
+import { mkdir, readFile, rm } from 'fs/promises'
 import { existsSync } from 'fs'
 import { safeStorage } from 'electron'
 import { pluginVaultDir, pluginVaultPath } from '../../utils/dirs'
+import { atomicWriteFile } from '../../utils/safeFile'
 import { parseGatewayOrigin, isValidEndpointPath } from './gateway-url'
 
 // safeStorage 不可用时的会话内内存兜底（重启即丢）
@@ -40,10 +41,7 @@ export async function writeVault(id: string, vault: IPluginVault): Promise<void>
   }
   await mkdir(pluginVaultDir(), { recursive: true })
   const enc = safeStorage.encryptString(JSON.stringify(vault))
-  const finalPath = pluginVaultPath(id)
-  const tmpPath = `${finalPath}.tmp`
-  await writeFile(tmpPath, enc, { mode: 0o600 })
-  await rename(tmpPath, finalPath) // 原子替换
+  await atomicWriteFile(pluginVaultPath(id), enc, { mode: 0o600 })
   memoryVaults.set(id, vault)
 }
 

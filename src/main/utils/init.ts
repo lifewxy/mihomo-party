@@ -1,4 +1,4 @@
-import { mkdir, writeFile, rm, readdir, cp, stat, rename } from 'fs/promises'
+import { mkdir, rm, readdir, cp, stat, rename } from 'fs/promises'
 import { existsSync } from 'fs'
 import { exec, execFile } from 'child_process'
 import { promisify } from 'util'
@@ -49,6 +49,7 @@ import {
   themesDir
 } from './dirs'
 import { initLogger } from './logger'
+import { atomicWriteFile } from './safeFile'
 
 let isInitBasicCompleted = false
 let isRuntimeFilesCompleted = false
@@ -140,7 +141,7 @@ async function initConfig(): Promise<void> {
   await Promise.all(
     configs.map(async (config) => {
       if (!existsSync(config.path)) {
-        await writeFile(config.path, stringify(config.content))
+        await atomicWriteFile(config.path, stringify(config.content))
       }
     })
   )

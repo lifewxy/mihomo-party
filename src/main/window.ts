@@ -1,5 +1,5 @@
 import { join } from 'path'
-import { readFileSync, writeFileSync } from 'fs'
+import { readFileSync } from 'fs'
 import { BrowserWindow, Menu, screen, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -9,6 +9,7 @@ import { triggerSysProxy } from './sys/sysproxy'
 import { hideDockIcon, showDockIcon } from './resolve/tray'
 import { dataDir } from './utils/dirs'
 import { mainWindowLogger } from './utils/logger'
+import { atomicWriteFileSync } from './utils/safeFile'
 
 interface WindowState {
   width: number
@@ -76,9 +77,9 @@ function updateWindowState(window: BrowserWindow, trackBounds = true): void {
 
 function persistWindowState(): void {
   try {
-    writeFileSync(windowStateFile(), JSON.stringify(windowState))
-  } catch {
-    // 忽略
+    atomicWriteFileSync(windowStateFile(), JSON.stringify(windowState))
+  } catch (error) {
+    void mainWindowLogger.error('Failed to persist window state', error)
   }
 }
 

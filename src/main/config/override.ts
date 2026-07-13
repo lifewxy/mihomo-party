@@ -1,13 +1,14 @@
-import { readFile, writeFile, rm } from 'fs/promises'
+import { readFile, rm } from 'fs/promises'
 import { existsSync } from 'fs'
 import { overrideConfigPath, overridePath } from '../utils/dirs'
 import * as chromeRequest from '../utils/chromeRequest'
 import { parse, stringify } from '../utils/yaml'
+import { atomicWriteFile, WriteQueue } from '../utils/safeFile'
 import { DEFAULT_MIHOMO_PORTS } from '../../shared/appConfig'
 import { getControledMihomoConfig } from './controledMihomo'
 
 let overrideConfig: IOverrideConfig // override.yaml
-let overrideConfigWriteQueue: Promise<void> = Promise.resolve()
+const overrideConfigWriteQueue = new WriteQueue()
 
 export async function getOverrideConfig(force = false): Promise<IOverrideConfig> {
   if (force || !overrideConfig) {
@@ -16,15 +17,15 @@ export async function getOverrideConfig(force = false): Promise<IOverrideConfig>
   }
   if (typeof overrideConfig !== 'object') overrideConfig = { items: [] }
   if (!Array.isArray(overrideConfig.items)) overrideConfig.items = []
-  return overrideConfig
+  return JSON.parse(JSON.stringify(overrideConfig)) as IOverrideConfig
 }
 
 export async function setOverrideConfig(config: IOverrideConfig): Promise<void> {
-  overrideConfigWriteQueue = overrideConfigWriteQueue.then(async () => {
-    overrideConfig = config
-    await writeFile(overrideConfigPath(), stringify(overrideConfig), 'utf-8')
+  await overrideConfigWriteQueue.run(async () => {
+    const nextConfig = JSON.parse(JSON.stringify(config)) as IOverrideConfig
+    await atomicWriteFile(overrideConfigPath(), stringify(nextConfig), { encoding: 'utf8' })
+    overrideConfig = nextConfig
   })
-  await overrideConfigWriteQueue
 }
 
 export async function getOverrideItem(id: string | undefined): Promise<IOverrideItem | undefined> {
@@ -110,5 +111,5 @@ export async function getOverride(id: string, ext: 'js' | 'yaml' | 'log'): Promi
 }
 
 export async function setOverride(id: string, ext: 'js' | 'yaml', content: string): Promise<void> {
-  await writeFile(overridePath(id, ext), content, 'utf-8')
+  await atomicWriteFile(overridePath(id, ext), content, { encoding: 'utf8' })
 }

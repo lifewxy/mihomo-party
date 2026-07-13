@@ -1,4 +1,4 @@
-import { copyFile, mkdir, writeFile, readFile, stat } from 'fs/promises'
+import { copyFile, mkdir, readFile, stat } from 'fs/promises'
 import vm from 'vm'
 import { existsSync, writeFileSync } from 'fs'
 import path from 'path'
@@ -25,6 +25,7 @@ import { deepMerge } from '../utils/merge'
 import { createLogger } from '../utils/logger'
 import { decryptAgeContent } from '../utils/age'
 import { DEFAULT_CONTROL_DNS, DEFAULT_CONTROL_SNIFF } from '../../shared/appConfig'
+import { atomicWriteFile } from '../utils/safeFile'
 
 const factoryLogger = createLogger('Factory')
 const SMART_OVERRIDE_ID = 'smart-core-override'
@@ -106,7 +107,9 @@ function ensureSmartProxyServerTunExclude(profile: IMihomoConfig, enabled: boole
   return added
 }
 
-export async function generateProfile(): Promise<string | undefined> {
+export async function generateProfile(
+  pendingControledMihomoConfig?: Partial<IMihomoConfig>
+): Promise<string | undefined> {
   // 读取最新的配置
   const { current } = await getProfileConfig(true)
   const {
@@ -130,7 +133,7 @@ export async function generateProfile(): Promise<string | undefined> {
     overrideIds.smart,
     ageSecretKey
   )
-  let controledMihomoConfig = await getControledMihomoConfig()
+  let controledMihomoConfig = pendingControledMihomoConfig ?? (await getControledMihomoConfig())
 
   // 根据开关状态过滤控制配置
   controledMihomoConfig = { ...controledMihomoConfig }
@@ -181,15 +184,16 @@ export async function generateProfile(): Promise<string | undefined> {
     delete partialProfile['external-ui']
     delete partialProfile['external-ui-url']
   }
-  runtimeConfig = profile
-  runtimeConfigStr = stringify(profile)
+  const nextRuntimeConfigStr = stringify(profile)
   if (diffWorkDir) {
     await prepareProfileWorkDir(current)
   }
-  await writeFile(
+  await atomicWriteFile(
     diffWorkDir ? mihomoWorkConfigPath(current) : mihomoWorkConfigPath('work'),
-    runtimeConfigStr
+    nextRuntimeConfigStr
   )
+  runtimeConfig = profile
+  runtimeConfigStr = nextRuntimeConfigStr
   return current
 }
 
