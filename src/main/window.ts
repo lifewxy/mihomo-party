@@ -4,8 +4,7 @@ import { BrowserWindow, Menu, screen, shell } from 'electron'
 import { is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { getAppConfig } from './config'
-import { quitWithoutCore, stopCore } from './core/manager'
-import { triggerSysProxy } from './sys/sysproxy'
+import { quitWithoutCore } from './core/manager'
 import { hideDockIcon, showDockIcon } from './resolve/tray'
 import { dataDir } from './utils/dirs'
 import { mainWindowLogger } from './utils/logger'
@@ -317,12 +316,6 @@ function setupWindowEvents(window: BrowserWindow, config: WindowConfig): void {
   window.on('move', () => updateWindowState(window))
   window.on('maximize', () => updateWindowState(window, false))
   window.on('unmaximize', () => updateWindowState(window, false))
-
-  window.on('session-end', async () => {
-    saveWindowState(window)
-    await triggerSysProxy(false)
-    await stopCore()
-  })
 
   window.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)

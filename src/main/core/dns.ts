@@ -83,6 +83,10 @@ export async function setPublicDNS(): Promise<void> {
 
 export async function recoverDNS(options: DNSOperationOptions = {}): Promise<void> {
   if (process.platform !== 'darwin') return
+  if (options.force && setPublicDNSTimer) {
+    clearTimeout(setPublicDNSTimer)
+    setPublicDNSTimer = null
+  }
   if (net.isOnline() || options.force) {
     const { originDNS } = await getAppConfig()
     if (originDNS) {

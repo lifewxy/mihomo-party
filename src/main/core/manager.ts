@@ -2,6 +2,7 @@ import { ChildProcess, execFile, spawn } from 'child_process'
 import { randomUUID } from 'crypto'
 import { readFile, mkdir, rm, writeFile } from 'fs/promises'
 import { promisify } from 'util'
+import { setTimeout as delay } from 'timers/promises'
 import path from 'path'
 import os from 'os'
 import { existsSync, watch, type FSWatcher as NodeFSWatcher } from 'fs'
@@ -79,15 +80,16 @@ export { getDefaultDevice } from './dns'
 const execFilePromise = promisify(execFile)
 const ctlParam = process.platform === 'win32' ? '-ext-ctl-pipe' : '-ext-ctl-unix'
 const coreHookTimeout = 30000
+const automaticRestartDelay = 750
 
 // 核心进程状态
 let child: ChildProcess | null = null
-let retry = 10
 let isRestarting = false
 let coreOperationPhase: 'initializing' | 'ready' | 'blocked' | 'shutting-down' = 'ready'
 let coreOperationTail: Promise<void> = Promise.resolve()
 let pendingRestart: Promise<void> | null = null
 let cancelActiveStartup: ((reason: Error) => void) | null = null
+let automaticRestartController: AbortController | null = null
 
 // 文件监听器
 let coreWatcher: ChokidarWatcher | null = null
@@ -146,6 +148,11 @@ function runCoreOperation<T>(operation: () => Promise<T>): Promise<T> {
     () => undefined
   )
   return current
+}
+
+function cancelAutomaticRestart(): void {
+  automaticRestartController?.abort()
+  automaticRestartController = null
 }
 
 function shellQuote(value: string): string {
@@ -523,7 +530,6 @@ function setupCoreListeners(
       startMihomoLogs(),
       startMihomoMemory()
     ])
-    retry = 10
   }
 
   const completeCoreStartup = async (): Promise<void> => {
@@ -555,13 +561,13 @@ function setupCoreListeners(
       return
     }
 
-    if (retry && coreOperationPhase === 'ready') {
-      managerLogger.info('Try Restart Core')
-      retry--
+    if (coreOperationPhase === 'ready') {
+      managerLogger.info('Try Restart Core after unexpected exit')
       try {
-        await restartCore()
+        await restartCoreAfterUnexpectedExit()
         resolveStartup([])
       } catch (error) {
+        managerLogger.error('Automatic core recovery failed', error)
         rejectStartup(error)
       }
     } else {
@@ -764,12 +770,14 @@ async function cleanupStoppedCoreResources(): Promise<void> {
 
 export async function stopCore(force = false): Promise<void> {
   ensureCoreOperationAllowed()
+  cancelAutomaticRestart()
   return runCoreOperation(() => stopCoreInternal(force))
 }
 
 // 退出不排队等待启动/重启完成：先同步终止子进程，再做有界清理。
 export async function stopCoreForExit(): Promise<void> {
   coreOperationPhase = 'shutting-down'
+  cancelAutomaticRestart()
   stopCoreProcessAndStreams()
   await Promise.allSettled([
     recoverDNS({ force: true, timeout: 750 }),
@@ -779,23 +787,50 @@ export async function stopCoreForExit(): Promise<void> {
 
 setStopCoreBeforeAdminRestart(stopCore)
 
-export async function restartCore(forceStop = false): Promise<void> {
-  ensureCoreOperationAllowed()
-  if (pendingRestart) return pendingRestart
-
-  isRestarting = true
-  const restart = runCoreOperation(async () => {
+async function restartCoreOnce(forceStop: boolean): Promise<void> {
+  const startAttempt = await runCoreOperation(async () => {
     await stopCoreInternal(forceStop)
     return startCoreInternal(false, true)
   })
-    .then((attempt) => attempt.readiness)
-    .then(() => undefined)
-    .finally(() => {
-      isRestarting = false
-      if (pendingRestart === restart) pendingRestart = null
-    })
+  await startAttempt.readiness
+}
+
+function trackCoreRestart(operation: () => Promise<void>): Promise<void> {
+  if (pendingRestart) return pendingRestart
+
+  isRestarting = true
+  const restart = operation().finally(() => {
+    isRestarting = false
+    if (pendingRestart === restart) pendingRestart = null
+  })
   pendingRestart = restart
   return restart
+}
+
+async function restartCoreAfterUnexpectedExit(): Promise<void> {
+  ensureCoreOperationAllowed()
+  const controller = new AbortController()
+  automaticRestartController = controller
+  try {
+    await trackCoreRestart(async () => {
+      try {
+        await restartCoreOnce(true)
+      } catch (error) {
+        if (controller.signal.aborted || coreOperationPhase === 'shutting-down') throw error
+
+        managerLogger.warn('Automatic core restart failed (attempt 1/2), retrying', error)
+        await delay(automaticRestartDelay, undefined, { signal: controller.signal })
+        await restartCoreOnce(true)
+      }
+    })
+  } finally {
+    if (automaticRestartController === controller) automaticRestartController = null
+  }
+}
+
+export function restartCore(forceStop = false): Promise<void> {
+  ensureCoreOperationAllowed()
+  return trackCoreRestart(() => restartCoreOnce(forceStop))
 }
 
 // 保持核心运行

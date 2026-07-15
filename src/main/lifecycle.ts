@@ -131,6 +131,15 @@ export function setupAppLifecycle(): void {
     // Keep the app and tray alive when lightweight tray mode destroys the renderer window.
   })
 
+  // Windows 注销/关机可能先触发窗口 session-end；复用同一清理 Promise，
+  // 避免与 powerMonitor.shutdown 重复执行普通、无界的核心和代理清理。
+  app.on('browser-window-created', (_event, window) => {
+    window.on('session-end', async () => {
+      await cleanupBeforeExit()
+      app.exit()
+    })
+  })
+
   app.on('before-quit', async (e) => {
     e.preventDefault()
     await cleanupBeforeExit()
