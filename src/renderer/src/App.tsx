@@ -1,5 +1,5 @@
 import { useTheme } from 'next-themes'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { NavigateFunction, useLocation, useNavigate, useRoutes } from 'react-router-dom'
 import OutboundModeSwitcher from '@renderer/components/sider/outbound-mode-switcher'
 import SysproxySwitcher from '@renderer/components/sider/sysproxy-switcher'
@@ -46,6 +46,21 @@ import MihomoIcon from './components/base/mihomo-icon'
 import { SIDER_CARD_ROUTES, getSiderCardByPath, mergeSiderOrder } from './utils/sider'
 
 export { getDriver }
+
+const FirstContentReady: React.FC = () => {
+  const { appConfig } = useAppConfig()
+  const location = useLocation()
+  const sent = useRef(false)
+
+  useEffect(() => {
+    const ready = Boolean(appConfig) && location.pathname !== '/'
+    if (!ready || sent.current) return
+    sent.current = true
+    window.electron.ipcRenderer.send('rendererFirstContentReady')
+  }, [appConfig, location.pathname])
+
+  return null
+}
 
 const App: React.FC = () => {
   const { t } = useTranslation()
@@ -318,7 +333,10 @@ const App: React.FC = () => {
         style={{ width: `calc(100% - ${siderWidthValue + 1}px)` }}
         className="main grow h-full overflow-y-auto"
       >
-        {page}
+        <Suspense fallback={<div className="h-full w-full bg-content1" />}>
+          {page}
+          <FirstContentReady />
+        </Suspense>
       </div>
     </div>
   )

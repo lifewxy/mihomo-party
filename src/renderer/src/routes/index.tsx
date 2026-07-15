@@ -1,22 +1,24 @@
 import { Navigate } from 'react-router-dom'
-import NetworkPage from '@renderer/pages/network'
-import Override from '@renderer/pages/override'
-import Proxies from '@renderer/pages/proxies'
-import Rules from '@renderer/pages/rules'
-import Settings from '@renderer/pages/settings'
-import Profiles from '@renderer/pages/profiles'
-import Logs from '@renderer/pages/logs'
-import Connections from '@renderer/pages/connections'
-import Mihomo from '@renderer/pages/mihomo'
-import Sysproxy from '@renderer/pages/sysproxy'
-import Tun from '@renderer/pages/tun'
-import Resources from '@renderer/pages/resources'
-import DNS from '@renderer/pages/dns'
-import Sniffer from '@renderer/pages/sniffer'
-import SubStore from '@renderer/pages/substore'
-import Traffic from '@renderer/pages/traffic'
+import { lazy } from 'react'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
 import { getSiderCardRoute } from '@renderer/utils/sider'
+
+const NetworkPage = lazy(() => import('@renderer/pages/network'))
+const Override = lazy(() => import('@renderer/pages/override'))
+const Proxies = lazy(() => import('@renderer/pages/proxies'))
+const Rules = lazy(() => import('@renderer/pages/rules'))
+const Settings = lazy(() => import('@renderer/pages/settings'))
+const Profiles = lazy(() => import('@renderer/pages/profiles'))
+const Logs = lazy(() => import('@renderer/pages/logs'))
+const Connections = lazy(() => import('@renderer/pages/connections'))
+const Mihomo = lazy(() => import('@renderer/pages/mihomo'))
+const Sysproxy = lazy(() => import('@renderer/pages/sysproxy'))
+const Tun = lazy(() => import('@renderer/pages/tun'))
+const Resources = lazy(() => import('@renderer/pages/resources'))
+const DNS = lazy(() => import('@renderer/pages/dns'))
+const Sniffer = lazy(() => import('@renderer/pages/sniffer'))
+const SubStore = lazy(() => import('@renderer/pages/substore'))
+const Traffic = lazy(() => import('@renderer/pages/traffic'))
 
 const HomeRedirect: React.FC = () => {
   const { appConfig } = useAppConfig()

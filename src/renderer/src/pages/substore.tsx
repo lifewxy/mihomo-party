@@ -2,6 +2,7 @@ import { Button } from '@heroui/react'
 import BasePage from '@renderer/components/base/base-page'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
 import {
+  ensureSubStoreServices,
   subStoreFrontendPort,
   subStorePort,
   startSubStoreFrontendServer,
@@ -22,13 +23,21 @@ const SubStore: React.FC = () => {
   const [backendPort, setBackendPort] = useState<number | undefined>()
   const [frontendPort, setFrontendPort] = useState<number | undefined>()
   const [isUpdating, setIsUpdating] = useState(false)
-  const getPort = async (): Promise<void> => {
+  const getPort = async (ensureStarted = true): Promise<void> => {
+    if (ensureStarted) {
+      const ports = await ensureSubStoreServices()
+      setBackendPort(ports.backendPort)
+      setFrontendPort(ports.frontendPort)
+      return
+    }
     setBackendPort(await subStorePort())
     setFrontendPort(await subStoreFrontendPort())
   }
   useEffect(() => {
-    getPort()
-  }, [useCustomSubStore])
+    void getPort().catch((error) => {
+      new Notification(`${t('substore.updateFailed')}: ${error}`)
+    })
+  }, [t, useCustomSubStore])
 
   if (!useCustomSubStore && !backendPort) return null
   if (!frontendPort) return null
@@ -56,7 +65,7 @@ const SubStore: React.FC = () => {
                   setFrontendPort(0)
                   await stopSubStoreFrontendServer()
                   await startSubStoreFrontendServer()
-                  await getPort()
+                  await getPort(false)
                   new Notification(t('substore.updateCompleted'))
                 } catch (e) {
                   new Notification(`${t('substore.updateFailed')}: ${e}`)

@@ -7,7 +7,9 @@ import { app, dialog } from 'electron'
 import {
   startPacServer,
   startSubStoreBackendServer,
-  startSubStoreFrontendServer
+  startSubStoreFrontendServer,
+  subStorePort,
+  subStoreFrontendPort
 } from '../resolve/server'
 import { triggerSysProxy } from '../sys/sysproxy'
 import {
@@ -55,6 +57,13 @@ let isInitBasicCompleted = false
 let isRuntimeFilesCompleted = false
 let initBasicPromise: Promise<void> | null = null
 let runtimeFilesPromise: Promise<void> | null = null
+let subStoreServicesPromise: Promise<SubStoreServicePorts> | null = null
+let subStoreServicesStarted = false
+
+interface SubStoreServicePorts {
+  backendPort?: number
+  frontendPort?: number
+}
 
 export function safeShowErrorBox(titleKey: string, message: string): void {
   let title: string
@@ -473,7 +482,25 @@ export async function init(): Promise<void> {
   initDeeplink()
 }
 
-export async function startSubStoreServices(): Promise<void> {
-  await ensureRuntimeFiles()
-  await Promise.all([startSubStoreFrontendServer(), startSubStoreBackendServer()])
+export async function startSubStoreServices(): Promise<SubStoreServicePorts> {
+  if (subStoreServicesStarted) {
+    return { backendPort: subStorePort, frontendPort: subStoreFrontendPort }
+  }
+  if (subStoreServicesPromise) return subStoreServicesPromise
+
+  subStoreServicesPromise = (async () => {
+    await ensureRuntimeFiles()
+    await Promise.all([startSubStoreFrontendServer(), startSubStoreBackendServer()])
+    subStoreServicesStarted = true
+    return {
+      backendPort: subStorePort,
+      frontendPort: subStoreFrontendPort
+    }
+  })()
+
+  try {
+    return await subStoreServicesPromise
+  } finally {
+    subStoreServicesPromise = null
+  }
 }

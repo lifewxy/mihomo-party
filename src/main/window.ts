@@ -104,6 +104,7 @@ function ensureVisibleOnScreen(state: WindowState): WindowState {
 export let mainWindow: BrowserWindow | null = null
 let quitTimeout: NodeJS.Timeout | null = null
 let createWindowPromise: Promise<void> | null = null
+let initialRendererReady = false
 
 // 主窗口 renderer 崩溃自动恢复的防抖，避免崩溃循环时无限重建
 const MAIN_WINDOW_CRASH_WINDOW = 60 * 1000
@@ -115,10 +116,37 @@ export async function createWindow(): Promise<void> {
   if (mainWindow && !mainWindow.isDestroyed()) return
   if (createWindowPromise) return createWindowPromise
 
-  createWindowPromise = createWindowInternal().finally(() => {
+  createWindowPromise = createWindowWithRecovery().finally(() => {
     createWindowPromise = null
   })
   return createWindowPromise
+}
+
+export function markInitialRendererReady(): void {
+  initialRendererReady = true
+}
+
+async function createWindowWithRecovery(): Promise<void> {
+  const maxCreateAttempts = 3
+  for (let attempt = 1; attempt <= maxCreateAttempts; attempt++) {
+    try {
+      await createWindowInternal()
+      return
+    } catch (error) {
+      const crashRecoveryExhausted =
+        mainWindowCrashTimestamps.length > MAIN_WINDOW_MAX_CRASH_RECOVERIES
+      if (attempt === maxCreateAttempts || crashRecoveryExhausted) throw error
+
+      const failedWindow = mainWindow
+      mainWindow = null
+      if (failedWindow && !failedWindow.isDestroyed()) failedWindow.destroy()
+      await mainWindowLogger.warn(
+        `Main window creation failed (attempt ${attempt}/${maxCreateAttempts}), recreating`,
+        error
+      )
+      await new Promise((resolve) => setTimeout(resolve, attempt * 250))
+    }
+  }
 }
 
 async function createWindowInternal(): Promise<void> {
@@ -176,10 +204,11 @@ async function createWindowInternal(): Promise<void> {
     mainWindow.webContents.openDevTools()
   }
 
+  const windowToLoad = mainWindow
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    mainWindow.loadURL(process.env['ELECTRON_RENDERER_URL'])
+    await windowToLoad.loadURL(process.env['ELECTRON_RENDERER_URL'])
   } else {
-    mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    await windowToLoad.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
 
@@ -205,10 +234,6 @@ function setupWindowEvents(window: BrowserWindow, config: WindowConfig): void {
       window.show()
       window.focusOnWebView()
     }
-  })
-
-  window.webContents.on('did-fail-load', () => {
-    window.webContents.reload()
   })
 
   // renderer 崩溃时外壳仍在（isDestroyed() 为 false）、did-fail-load 不触发，会白屏；销毁并按需重建
@@ -238,12 +263,16 @@ function setupWindowEvents(window: BrowserWindow, config: WindowConfig): void {
     }
 
     // 可见时立即重建，否则留待下次 showMainWindow()，避免后台崩溃突然弹窗
-    if (wasVisible) {
-      void createWindow().then(() => {
-        clearQuitTimeout()
-        mainWindow?.show()
-        mainWindow?.focusOnWebView()
-      })
+    if (wasVisible || !initialRendererReady) {
+      void createWindow()
+        .then(() => {
+          if (wasVisible) {
+            clearQuitTimeout()
+            mainWindow?.show()
+            mainWindow?.focusOnWebView()
+          }
+        })
+        .catch((error) => mainWindowLogger.error('Failed to recover main window', error))
     }
   })
 

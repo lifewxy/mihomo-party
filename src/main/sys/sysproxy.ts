@@ -56,21 +56,38 @@ const defaultBypass: string[] = (() => {
   }
 })()
 
-export async function triggerSysProxy(enable: boolean): Promise<void> {
-  if (net.isOnline()) {
+interface TriggerSysProxyOptions {
+  helperTimeout?: number
+  force?: boolean
+}
+
+function helperAxiosOptions(helperTimeout?: number): { socketPath: string; timeout?: number } {
+  return helperTimeout === undefined
+    ? { socketPath: helperSocketPath }
+    : { socketPath: helperSocketPath, timeout: helperTimeout }
+}
+
+export async function triggerSysProxy(
+  enable: boolean,
+  options: TriggerSysProxyOptions = {}
+): Promise<void> {
+  if (triggerSysProxyTimer) {
+    clearTimeout(triggerSysProxyTimer)
+    triggerSysProxyTimer = null
+  }
+  if (net.isOnline() || options.force) {
     if (enable) {
-      await disableSysProxy()
-      await enableSysProxy()
+      await disableSysProxy(options.helperTimeout)
+      await enableSysProxy(options.helperTimeout)
     } else {
-      await disableSysProxy()
+      await disableSysProxy(options.helperTimeout)
     }
   } else {
-    if (triggerSysProxyTimer) clearTimeout(triggerSysProxyTimer)
-    triggerSysProxyTimer = setTimeout(() => triggerSysProxy(enable), 5000)
+    triggerSysProxyTimer = setTimeout(() => triggerSysProxy(enable, options), 5000)
   }
 }
 
-async function enableSysProxy(): Promise<void> {
+async function enableSysProxy(helperTimeout?: number): Promise<void> {
   await startPacServer()
   const { sysProxy } = await getAppConfig()
   const { mode, host, bypass = defaultBypass } = sysProxy
@@ -84,7 +101,7 @@ async function enableSysProxy(): Promise<void> {
         axios.post(
           'http://localhost/pac',
           { url: `http://${proxyHost}:${pacPort}/pac` },
-          { socketPath: helperSocketPath }
+          helperAxiosOptions(helperTimeout)
         )
       )
     } else {
@@ -92,7 +109,7 @@ async function enableSysProxy(): Promise<void> {
         axios.post(
           'http://localhost/global',
           { host: proxyHost, port: port.toString(), bypass: bypass.join(',') },
-          { socketPath: helperSocketPath }
+          helperAxiosOptions(helperTimeout)
         )
       )
     }
@@ -111,11 +128,14 @@ async function enableSysProxy(): Promise<void> {
   }
 }
 
-async function disableSysProxy(): Promise<void> {
+async function disableSysProxy(helperTimeout?: number): Promise<void> {
   await stopPacServer()
 
   if (process.platform === 'darwin') {
-    await helperRequest(() => axios.get('http://localhost/off', { socketPath: helperSocketPath }))
+    await helperRequest(
+      () => axios.get('http://localhost/off', helperAxiosOptions(helperTimeout)),
+      helperTimeout === undefined ? 2 : 0
+    )
   } else {
     // Windows / Linux 直接使用 sysproxy-rs
     try {

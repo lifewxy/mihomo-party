@@ -84,6 +84,10 @@ const coreHookTimeout = 30000
 let child: ChildProcess | null = null
 let retry = 10
 let isRestarting = false
+let coreOperationPhase: 'initializing' | 'ready' | 'blocked' | 'shutting-down' = 'ready'
+let coreOperationTail: Promise<void> = Promise.resolve()
+let pendingRestart: Promise<void> | null = null
+let cancelActiveStartup: ((reason: Error) => void) | null = null
 
 // 文件监听器
 let coreWatcher: ChokidarWatcher | null = null
@@ -105,6 +109,43 @@ interface CoreHookWaiter {
 
 function hasCoreProcess(): boolean {
   return Boolean(child && !child.killed && child.exitCode === null && child.signalCode === null)
+}
+
+export function beginCoreInitialization(): void {
+  coreOperationPhase = 'initializing'
+}
+
+export function completeCoreInitialization(canStart: boolean): void {
+  if (coreOperationPhase !== 'shutting-down') {
+    coreOperationPhase = canStart ? 'ready' : 'blocked'
+  }
+}
+
+function ensureCoreOperationAllowed(): void {
+  if (coreOperationPhase === 'initializing') {
+    throw new Error('Core is still initializing')
+  }
+  if (coreOperationPhase === 'blocked') {
+    throw new Error('Core startup is unavailable because startup safety checks did not pass')
+  }
+  if (coreOperationPhase === 'shutting-down') {
+    throw new Error('Core startup was cancelled because the application is shutting down')
+  }
+}
+
+function ensureNotShuttingDown(): void {
+  if (coreOperationPhase === 'shutting-down') {
+    throw new Error('Core startup was cancelled because the application is shutting down')
+  }
+}
+
+function runCoreOperation<T>(operation: () => Promise<T>): Promise<T> {
+  const current = coreOperationTail.then(operation, operation)
+  coreOperationTail = current.then(
+    () => undefined,
+    () => undefined
+  )
+  return current
 }
 
 function shellQuote(value: string): string {
@@ -220,12 +261,22 @@ async function stopPidFileCore(): Promise<void> {
     try {
       process.kill(pid, 0)
       process.kill(pid, 'SIGINT')
-      await new Promise((resolve) => setTimeout(resolve, 1000))
-      try {
-        process.kill(pid, 0)
-        process.kill(pid, 'SIGKILL')
-      } catch {
-        // ignore
+      const deadline = Date.now() + 500
+      let stillRunning = true
+      while (stillRunning && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        try {
+          process.kill(pid, 0)
+        } catch {
+          stillRunning = false
+        }
+      }
+      if (stillRunning) {
+        try {
+          process.kill(pid, 'SIGKILL')
+        } catch {
+          // ignore
+        }
       }
     } catch {
       // ignore
@@ -244,8 +295,7 @@ export function initCoreWatcher(): void {
     // 等待核心自我更新完成，避免与核心自动重启产生竞态
     await new Promise((resolve) => setTimeout(resolve, 3000))
     try {
-      await stopCore(true)
-      await startCore()
+      await restartCore(true)
     } catch (e) {
       safeShowErrorBox('mihomo.error.coreStartFailed', `${e}`)
     }
@@ -326,7 +376,8 @@ async function prepareCore(detached: boolean, skipStop = false): Promise<CoreCon
     autoSetDNS = true,
     diffWorkDir = false,
     mihomoCpuPriority = 'PRIORITY_NORMAL',
-    coreStartupMode = 'log'
+    coreStartupMode = 'log',
+    testProfileOnStart = true
   } = appConfig
 
   const { 'log-level': logLevel = 'info' as LogLevel, tun } = mihomoConfig
@@ -340,19 +391,23 @@ async function prepareCore(detached: boolean, skipStop = false): Promise<CoreCon
   // generateProfile 返回实际使用的 current
   const current = await generateProfile()
   const ageSecretKey = (await getProfileItem(current))?.ageSecretKey || ''
-  await checkProfile(current, core, diffWorkDir, ageSecretKey)
+  if (testProfileOnStart) {
+    await checkProfile(current, core, diffWorkDir, ageSecretKey)
+  }
   if (!skipStop && hasCoreProcess()) {
-    await stopCore()
+    await stopCoreInternal()
   }
   await cleanupSocketFile()
 
   // 设置 DNS
   if (tun?.enable && autoSetDNS) {
+    ensureNotShuttingDown()
     try {
       await setPublicDNS()
     } catch (error) {
       managerLogger.error('set dns failed', error)
     }
+    ensureNotShuttingDown()
   }
 
   // 获取动态 IPC 路径
@@ -437,6 +492,27 @@ function setupCoreListeners(
   reject: (reason: unknown) => void
 ): void {
   const { logLevel, startupMode } = config
+  let startupSettled = false
+  const startupTimer =
+    startupMode === 'log'
+      ? setTimeout(() => {
+          rejectStartup(new Error(`Timed out waiting for core API readiness: ${coreHookTimeout}ms`))
+        }, coreHookTimeout)
+      : undefined
+
+  const resolveStartup = (value: Promise<void>[]): void => {
+    if (startupSettled) return
+    startupSettled = true
+    if (startupTimer) clearTimeout(startupTimer)
+    resolve(value)
+  }
+
+  const rejectStartup = (reason: unknown): void => {
+    if (startupSettled) return
+    startupSettled = true
+    if (startupTimer) clearTimeout(startupTimer)
+    reject(reason)
+  }
 
   const startMihomoApiStreams = async (): Promise<void> => {
     await waitForCoreReady()
@@ -468,17 +544,29 @@ function setupCoreListeners(
       child = null
     }
 
-    if (isRestarting) {
-      managerLogger.info('Core closed during restart, skipping auto-restart')
+    if (coreOperationPhase === 'shutting-down') {
+      rejectStartup(new Error('Core closed because the application is shutting down'))
       return
     }
 
-    if (retry) {
+    if (isRestarting) {
+      managerLogger.info('Core closed during restart, skipping auto-restart')
+      rejectStartup(new Error('Core startup was interrupted by restart'))
+      return
+    }
+
+    if (retry && coreOperationPhase === 'ready') {
       managerLogger.info('Try Restart Core')
       retry--
-      await restartCore()
+      try {
+        await restartCore()
+        resolveStartup([])
+      } catch (error) {
+        rejectStartup(error)
+      }
     } else {
-      await stopCore()
+      await runCoreOperation(() => stopCoreInternal())
+      rejectStartup(new Error(`Core exited before startup completed, code: ${code}`))
     }
   })
 
@@ -490,7 +578,7 @@ function setupCoreListeners(
       patchControledMihomoConfig({ tun: { enable: false } })
       mainWindow?.webContents.send('controledMihomoConfigUpdated')
       ipcMain.emit('updateTrayMenu')
-      reject(i18next.t('tun.error.tunPermissionDenied'))
+      rejectStartup(i18next.t('tun.error.tunPermissionDenied'))
       return
     }
 
@@ -512,7 +600,7 @@ function setupCoreListeners(
         }
       }
 
-      reject(i18next.t('mihomo.error.externalControllerListenError'))
+      rejectStartup(i18next.t('mihomo.error.externalControllerListenError'))
       return
     }
 
@@ -526,7 +614,7 @@ function setupCoreListeners(
       (process.platform === 'win32' && str.includes('RESTful API pipe listening at'))
 
     if (isApiReady) {
-      resolve([
+      resolveStartup([
         new Promise((innerResolve) => {
           proc.stdout?.on('data', async (innerData) => {
             if (
@@ -552,7 +640,7 @@ function setupCoreListeners(
 
   if (startupMode === 'post-up') {
     if (!hookWaiter) {
-      reject(new Error('Core post-up startup mode requires a startup hook'))
+      rejectStartup(new Error('Core post-up startup mode requires a startup hook'))
       return
     }
 
@@ -560,15 +648,22 @@ function setupCoreListeners(
       .then(async () => {
         managerLogger.info('Core post-up hook triggered')
         await startMihomoApiStreams()
-        resolve([completeCoreStartup()])
+        resolveStartup([completeCoreStartup()])
       })
-      .catch(reject)
+      .catch(rejectStartup)
   }
+
+  cancelActiveStartup = (reason) => rejectStartup(reason)
 }
 
-// 启动核心
-export async function startCore(detached = false, skipStop = false): Promise<Promise<void>[]> {
+interface CoreStartAttempt {
+  readiness: Promise<Promise<void>[]>
+}
+
+async function startCoreInternal(detached = false, skipStop = false): Promise<CoreStartAttempt> {
+  ensureNotShuttingDown()
   const config = await prepareCore(detached, skipStop)
+  ensureNotShuttingDown()
   const hookWaiter = config.startupHook ? createCoreHookWaiter(config.startupHook) : undefined
   const proc = spawnCoreProcess(config)
   hookWaiter?.attachProcess(proc)
@@ -579,16 +674,53 @@ export async function startCore(detached = false, skipStop = false): Promise<Pro
       `Core process detached successfully on ${process.platform}, PID: ${proc.pid}`
     )
     proc.unref()
-    return [new Promise(() => {})]
+    return { readiness: Promise.resolve([new Promise(() => {})]) }
   }
 
-  return new Promise((resolve, reject) => {
+  const readiness = new Promise<Promise<void>[]>((resolve, reject) => {
     setupCoreListeners(proc, config, hookWaiter, resolve, reject)
   })
+  const activeCancel = cancelActiveStartup
+  readiness.then(
+    () => {
+      if (cancelActiveStartup === activeCancel) cancelActiveStartup = null
+    },
+    () => {
+      if (cancelActiveStartup === activeCancel) cancelActiveStartup = null
+    }
+  )
+
+  return {
+    readiness
+  }
 }
 
-// 停止核心
-export async function stopCore(force = false): Promise<void> {
+// 互斥只覆盖 prepare/spawn；API-ready 等待在队列外进行，避免 close handler 自重启死锁。
+function queueCoreStart(detached = false, skipStop = false): Promise<Promise<void>[]> {
+  return runCoreOperation(async () => {
+    ensureNotShuttingDown()
+    if (!detached && !skipStop && hasCoreProcess()) {
+      return { readiness: Promise.resolve<Promise<void>[]>([]) }
+    }
+    return startCoreInternal(detached, skipStop)
+  }).then((attempt) => attempt.readiness)
+}
+
+export function startCore(detached = false, skipStop = false): Promise<Promise<void>[]> {
+  ensureCoreOperationAllowed()
+  return queueCoreStart(detached, skipStop)
+}
+
+// 启动期唯一的例外入口：安全检查通过后由主流程调用，仍受退出状态保护。
+export function startCoreForStartup(): Promise<Promise<void>[]> {
+  if (coreOperationPhase === 'blocked') {
+    throw new Error('Core startup is unavailable because startup safety checks did not pass')
+  }
+  ensureNotShuttingDown()
+  return queueCoreStart()
+}
+
+async function stopCoreInternal(force = false, cancelStartup = true): Promise<void> {
   if (!force && process.platform === 'darwin') {
     try {
       await recoverDNS()
@@ -597,6 +729,16 @@ export async function stopCore(force = false): Promise<void> {
     }
   }
 
+  stopCoreProcessAndStreams(cancelStartup)
+
+  await cleanupStoppedCoreResources()
+}
+
+function stopCoreProcessAndStreams(cancelStartup = true): void {
+  if (cancelStartup) {
+    cancelActiveStartup?.(new Error('Core startup was cancelled by a stop request'))
+    cancelActiveStartup = null
+  }
   if (child) {
     child.removeAllListeners()
     child.kill('SIGINT')
@@ -607,7 +749,9 @@ export async function stopCore(force = false): Promise<void> {
   stopMihomoConnections()
   stopMihomoLogs()
   stopMihomoMemory()
+}
 
+async function cleanupStoppedCoreResources(): Promise<void> {
   try {
     await getAxios(true)
   } catch (error) {
@@ -618,65 +762,60 @@ export async function stopCore(force = false): Promise<void> {
   await cleanupSocketFile()
 }
 
+export async function stopCore(force = false): Promise<void> {
+  ensureCoreOperationAllowed()
+  return runCoreOperation(() => stopCoreInternal(force))
+}
+
+// 退出不排队等待启动/重启完成：先同步终止子进程，再做有界清理。
+export async function stopCoreForExit(): Promise<void> {
+  coreOperationPhase = 'shutting-down'
+  stopCoreProcessAndStreams()
+  await Promise.allSettled([
+    recoverDNS({ force: true, timeout: 750 }),
+    cleanupStoppedCoreResources()
+  ])
+}
+
 setStopCoreBeforeAdminRestart(stopCore)
 
-// 重启核心
-export async function restartCore(): Promise<void> {
-  if (isRestarting) {
-    managerLogger.info('Core restart already in progress, skipping duplicate request')
-    return
-  }
+export async function restartCore(forceStop = false): Promise<void> {
+  ensureCoreOperationAllowed()
+  if (pendingRestart) return pendingRestart
 
   isRestarting = true
-  let retryCount = 0
-  const maxRetries = 3
-
-  try {
-    // 先显式停止核心，确保状态干净
-    await stopCore()
-
-    // 尝试启动核心，失败时重试
-    while (retryCount < maxRetries) {
-      try {
-        // skipStop=true 因为我们已经在上面停止了核心
-        await startCore(false, true)
-        return // 成功启动，退出函数
-      } catch (e) {
-        retryCount++
-        managerLogger.error(`restart core failed (attempt ${retryCount}/${maxRetries})`, e)
-
-        if (retryCount >= maxRetries) {
-          throw e
-        }
-
-        // 重试前等待一段时间
-        await new Promise((resolve) => setTimeout(resolve, 1000 * retryCount))
-        // 确保清理干净再重试
-        await stopCore()
-        await cleanupSocketFile()
-      }
-    }
-  } finally {
-    isRestarting = false
-  }
+  const restart = runCoreOperation(async () => {
+    await stopCoreInternal(forceStop)
+    return startCoreInternal(false, true)
+  })
+    .then((attempt) => attempt.readiness)
+    .then(() => undefined)
+    .finally(() => {
+      isRestarting = false
+      if (pendingRestart === restart) pendingRestart = null
+    })
+  pendingRestart = restart
+  return restart
 }
 
 // 保持核心运行
-export async function keepCoreAlive(): Promise<void> {
+export async function keepCoreAlive(): Promise<boolean> {
   try {
     await startCore(true)
     if (child?.pid) {
       await writeFile(path.join(dataDir(), 'core.pid'), child.pid.toString())
     }
+    return Boolean(child?.pid)
   } catch (e) {
     safeShowErrorBox('mihomo.error.coreStartFailed', `${e}`)
+    return false
   }
 }
 
 // 退出但保持核心运行
 export async function quitWithoutCore(): Promise<void> {
   managerLogger.info(`Starting lightweight mode on platform: ${process.platform}`)
-  await keepCoreAlive()
+  if (!(await keepCoreAlive())) return
   await startMonitor(true)
   managerLogger.info('Exiting main process, core will continue running in background')
   app.exit()

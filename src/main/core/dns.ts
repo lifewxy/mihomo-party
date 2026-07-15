@@ -10,6 +10,11 @@ const helperSocketPath = '/tmp/mihomo-party-helper.sock'
 let setPublicDNSTimer: NodeJS.Timeout | null = null
 let recoverDNSTimer: NodeJS.Timeout | null = null
 
+interface DNSOperationOptions {
+  force?: boolean
+  timeout?: number
+}
+
 export async function getDefaultDevice(): Promise<string> {
   const { stdout: deviceOut } = await execPromise(`route -n get default`)
   let device = deviceOut.split('\n').find((s) => s.includes('interface:'))
@@ -41,11 +46,20 @@ async function getOriginDNS(): Promise<void> {
   }
 }
 
-async function setDNS(dns: string): Promise<void> {
+async function setDNS(dns: string, timeout?: number): Promise<void> {
   const service = await getDefaultService()
   try {
-    await axios.post('http://localhost/dns', { service, dns }, { socketPath: helperSocketPath })
-  } catch {
+    await axios.post(
+      'http://localhost/dns',
+      { service, dns },
+      {
+        socketPath: helperSocketPath,
+        ...(timeout === undefined ? {} : { timeout })
+      }
+    )
+  } catch (error) {
+    // 退出清理使用有界 helper 请求；此时不能再弹授权框或启动无界的 osascript fallback。
+    if (timeout !== undefined) throw error
     // fallback to osascript if helper not available
     const shell = `networksetup -setdnsservers "${service}" ${dns}`
     const command = `do shell script "${shell}" with administrator privileges`
@@ -67,16 +81,16 @@ export async function setPublicDNS(): Promise<void> {
   }
 }
 
-export async function recoverDNS(): Promise<void> {
+export async function recoverDNS(options: DNSOperationOptions = {}): Promise<void> {
   if (process.platform !== 'darwin') return
-  if (net.isOnline()) {
+  if (net.isOnline() || options.force) {
     const { originDNS } = await getAppConfig()
     if (originDNS) {
-      await setDNS(originDNS)
+      await setDNS(originDNS, options.timeout)
       await patchAppConfig({ originDNS: undefined })
     }
   } else {
     if (recoverDNSTimer) clearTimeout(recoverDNSTimer)
-    recoverDNSTimer = setTimeout(() => recoverDNS(), 5000)
+    recoverDNSTimer = setTimeout(() => recoverDNS(options), 5000)
   }
 }

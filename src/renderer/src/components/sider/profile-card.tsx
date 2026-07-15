@@ -9,11 +9,12 @@ import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import 'dayjs/locale/zh-cn'
 import dayjs from '@renderer/utils/dayjs'
-import React, { useState } from 'react'
+import React, { lazy, Suspense, useState } from 'react'
 import { useAppConfig } from '@renderer/hooks/use-app-config'
 import { TiFolder } from 'react-icons/ti'
 import { useTranslation } from 'react-i18next'
-import ConfigViewer from './config-viewer'
+
+const ConfigViewer = lazy(() => import('./config-viewer'))
 
 dayjs.extend(relativeTime)
 dayjs.locale('zh-cn')
@@ -89,7 +90,11 @@ const ProfileCard: React.FC<Props> = (props) => {
       }}
       className={`${profileCardStatus} profile-card`}
     >
-      {showRuntimeConfig && <ConfigViewer onClose={() => setShowRuntimeConfig(false)} />}
+      {showRuntimeConfig && (
+        <Suspense fallback={null}>
+          <ConfigViewer onClose={() => setShowRuntimeConfig(false)} />
+        </Suspense>
+      )}
       {profileCardStatus === 'col-span-2' ? (
         <Card
           fullWidth

@@ -125,6 +125,10 @@ interface IpcApi {
   stopSubStoreFrontendServer: () => Promise<void>
   startSubStoreBackendServer: () => Promise<void>
   stopSubStoreBackendServer: () => Promise<void>
+  ensureSubStoreServices: () => Promise<{
+    backendPort?: number
+    frontendPort?: number
+  }>
   downloadSubStore: () => Promise<void>
   subStorePort: () => Promise<number>
   subStoreFrontendPort: () => Promise<number>
@@ -289,6 +293,7 @@ export const {
   stopSubStoreFrontendServer,
   startSubStoreBackendServer,
   stopSubStoreBackendServer,
+  ensureSubStoreServices,
   downloadSubStore,
   subStorePort,
   subStoreFrontendPort,
