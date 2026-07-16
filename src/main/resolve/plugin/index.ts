@@ -13,7 +13,14 @@ import { discoverGateway } from './discovery'
 import { browserLogin, CLIENT_ID } from './oauth'
 import { generateDevice } from './device'
 import { enroll, fetchConfig, revoke, GatewayError, type GatewayTarget } from './gateway'
-import { writeVault, readVault, removeVault } from './vault'
+import {
+  writeVault,
+  readVault,
+  removeVault,
+  hasVaultMaterial,
+  ensureVaultWritable,
+  VaultUnavailableError
+} from './vault'
 import { computeBackoff } from './backoff'
 import { MAX_PLUGIN_FILE_BYTES } from './constants'
 import { fetchRemotePlugin } from './remote'
@@ -136,7 +143,9 @@ async function runLogin(id: string): Promise<void> {
   if (!record) throw new Error('Plugin not found')
   const net = await netOpts()
 
-  const existing = await readVault(id)
+  const existingResult = await readVault(id)
+  if (existingResult.kind === 'unavailable') throw new VaultUnavailableError()
+  const existing = existingResult.kind === 'ok' ? existingResult.vault : undefined
   if (existing && record.status === 'needs-login') {
     try {
       const content = await fetchWithRediscovery(id, record, existing, net)
@@ -148,6 +157,10 @@ async function runLogin(id: string): Promise<void> {
       await removeVault(id)
     }
   }
+
+  // 先确认 Keychain/secret store 可以实际加密，再打开 OAuth 和 enroll，避免用户完成
+  // 浏览器登录后才发现私钥无法持久化。旧 Electron 兼容包会在这里走同步探测。
+  await ensureVaultWritable()
 
   const wk = await discoverGateway(record.loginUrl, net)
   const target: GatewayTarget = { gateway: wk.gateway, endpoints: wk.endpoints }
@@ -165,11 +178,23 @@ async function runLogin(id: string): Promise<void> {
     },
     net
   )
-  await writeVault(id, {
+  const newVault: IPluginVault = {
     devicePrivKey: dev.privKeyB64,
     deviceId: dev.deviceId,
     gateway: target
-  })
+  }
+  try {
+    await writeVault(id, newVault)
+  } catch (error) {
+    // enroll 已成功但凭据无法持久化时，立即用仍在内存中的新密钥回收设备，
+    // 避免用户重试登录不断消耗服务端设备额度。
+    try {
+      await revoke(target, { deviceId: dev.deviceId, privKeyB64: dev.privKeyB64 }, net)
+    } catch {
+      // best-effort
+    }
+    throw error
+  }
   const content = await fetchConfig(
     target,
     { deviceId: dev.deviceId, privKeyB64: dev.privKeyB64 },
@@ -213,6 +238,19 @@ function fetchWithRediscovery(
   )
 }
 
+async function recordTransientUpdateFailure(record: IPluginItem): Promise<void> {
+  const now = Date.now()
+  const failureCount = (record.failureCount ?? 0) + 1
+  const { nextRetryAt } = computeBackoff(failureCount, now)
+  await updatePluginItem({
+    ...record,
+    lastUpdateErrorType: 'transient',
+    lastUpdateErrorAt: now,
+    failureCount,
+    nextRetryAt
+  })
+}
+
 // 自动/手动更新（静默，不弹浏览器）
 export async function updatePluginProfile(id: string, force = false): Promise<void> {
   const record = await getPluginItem(id)
@@ -231,8 +269,13 @@ export async function updatePluginProfile(id: string, force = false): Promise<vo
     return
   }
   if (!force && record.nextRetryAt && Date.now() < record.nextRetryAt) return
-  const vault = await readVault(id)
-  if (!vault) {
+  const vaultResult = await readVault(id)
+  if (vaultResult.kind === 'unavailable') {
+    await recordTransientUpdateFailure(record)
+    notifyRenderer()
+    return
+  }
+  if (vaultResult.kind !== 'ok') {
     await updatePluginItem({
       ...record,
       status: 'needs-reauth',
@@ -242,6 +285,7 @@ export async function updatePluginProfile(id: string, force = false): Promise<vo
     notifyRenderer()
     return
   }
+  const vault = vaultResult.vault
   const net = await netOpts()
   try {
     const content = await fetchWithRediscovery(id, record, vault, net)
@@ -275,25 +319,18 @@ export async function updatePluginProfile(id: string, force = false): Promise<vo
         nextRetryAt: undefined
       })
     } else {
-      const failureCount = (record.failureCount ?? 0) + 1
-      const { nextRetryAt } = computeBackoff(failureCount, now)
-      await updatePluginItem({
-        ...record,
-        lastUpdateErrorType: 'transient',
-        lastUpdateErrorAt: now,
-        failureCount,
-        nextRetryAt
-      })
+      await recordTransientUpdateFailure(record)
     }
   }
   notifyRenderer()
 }
 
-// 启动审计：active 但 vault 缺失（如 Linux 无 safeStorage 重启）→ needs-reauth
+// 启动审计只检查 vault 文件/内存是否存在，不触发 safeStorage/Keychain 解密。
+// active 但材料缺失（如 Linux 内存兜底重启）→ needs-reauth。
 export async function auditPluginVault(id: string): Promise<void> {
   const record = await getPluginItem(id)
   if (!record || record.status !== 'active') return
-  if (await readVault(id)) return
+  if (hasVaultMaterial(id)) return
   await updatePluginItem({
     ...record,
     status: 'needs-reauth',
@@ -306,8 +343,9 @@ export async function auditPluginVault(id: string): Promise<void> {
 // best-effort 通知服务端解绑设备。删除插件的两个入口——插件管理 removePlugin 与 profiles 列表
 // 删除（profile.ts removeProfileItem 级联）——都经此函数，避免服务端设备绑定残留。失败不抛。
 export async function revokePluginDevice(id: string): Promise<void> {
-  const vault = await readVault(id)
-  if (!vault) return
+  const vaultResult = await readVault(id)
+  if (vaultResult.kind !== 'ok') return
+  const vault = vaultResult.vault
   const record = await getPluginItem(id)
   const cred = { deviceId: vault.deviceId, privKeyB64: vault.devicePrivKey }
   const net = await netOpts()

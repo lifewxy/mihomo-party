@@ -3,16 +3,30 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 const profiles: Record<string, string> = {}
 const pluginItems: Record<string, IPluginItem> = {}
 const vaults: Record<string, IPluginVault> = {}
+const unavailableVaults = new Set<string>()
+const invalidVaults = new Set<string>()
+const unwritableVaults = new Set<string>()
+let vaultPreflightUnavailable = false
 
 vi.mock('./vault', () => ({
   writeVault: vi.fn(async (id: string, v: IPluginVault) => {
+    if (unwritableVaults.has(id)) throw new Error('Plugin vault is temporarily unavailable')
     vaults[id] = v
   }),
-  readVault: vi.fn(async (id: string) => vaults[id]),
+  readVault: vi.fn(async (id: string) => {
+    if (unavailableVaults.has(id)) return { kind: 'unavailable' as const }
+    if (invalidVaults.has(id)) return { kind: 'invalid' as const }
+    return vaults[id] ? { kind: 'ok' as const, vault: vaults[id] } : { kind: 'missing' as const }
+  }),
+  hasVaultMaterial: vi.fn((id: string) => id in vaults),
+  ensureVaultWritable: vi.fn(async () => {
+    if (vaultPreflightUnavailable) throw new Error('Plugin vault is temporarily unavailable')
+  }),
   removeVault: vi.fn(async (id: string) => {
     delete vaults[id]
   }),
-  isVaultPersistent: () => true
+  isVaultPersistent: async () => true,
+  VaultUnavailableError: class VaultUnavailableError extends Error {}
 }))
 vi.mock('../../config/plugin', () => ({
   getPluginItem: vi.fn(async (id: string) => pluginItems[id]),
@@ -61,6 +75,7 @@ vi.mock('./gateway', async (importOriginal) => {
 })
 
 import { GatewayError } from './gateway'
+import { readVault as readVaultMock } from './vault'
 import {
   previewPlugin,
   installPlugin,
@@ -94,6 +109,10 @@ beforeEach(() => {
   for (const k of Object.keys(profiles)) delete profiles[k]
   for (const k of Object.keys(pluginItems)) delete pluginItems[k]
   for (const k of Object.keys(vaults)) delete vaults[k]
+  unavailableVaults.clear()
+  invalidVaults.clear()
+  unwritableVaults.clear()
+  vaultPreflightUnavailable = false
   discoverGateway.mockReset().mockResolvedValue(WK)
   browserLogin.mockReset().mockResolvedValue({
     code: 'C',
@@ -145,6 +164,30 @@ describe('loginPlugin', () => {
       expect.objectContaining({ code: 'C', code_verifier: 'V', client_id: 'mihomo-party' }),
       expect.any(Object)
     )
+  })
+
+  it('does not start OAuth/enroll while the vault backend is temporarily unavailable', async () => {
+    const item = await installPlugin(file())
+    // 真实路径：新插件尚无 vault，readVault 返回 missing，随后由写入预检拦截。
+    vaultPreflightUnavailable = true
+
+    await expect(loginPlugin(item.id)).rejects.toThrow('PLUGIN_LOGIN_FAILED')
+    expect(browserLogin).not.toHaveBeenCalled()
+    expect(enroll).not.toHaveBeenCalled()
+  })
+
+  it('best-effort revokes a newly enrolled device when vault persistence fails', async () => {
+    const item = await installPlugin(file())
+    unwritableVaults.add(item.id)
+
+    await expect(loginPlugin(item.id)).rejects.toThrow('PLUGIN_LOGIN_FAILED')
+    expect(enroll).toHaveBeenCalledOnce()
+    expect(revoke).toHaveBeenCalledWith(
+      expect.objectContaining({ gateway: WK.gateway }),
+      expect.objectContaining({ deviceId: expect.any(String), privKeyB64: expect.any(String) }),
+      expect.any(Object)
+    )
+    expect(pluginItems[item.id].status).toBe('needs-login')
   })
 
   it('re-login (reauth) after restart works from the persisted loginUrl alone (no reimport)', async () => {
@@ -255,6 +298,21 @@ describe('updatePluginProfile', () => {
     expect(profiles[pluginItems[item.id].profileId!]).toBe(before)
   })
 
+  it('temporary vault unavailability keeps the plugin active and backs off', async () => {
+    const item = await installPlugin(file())
+    await loginPlugin(item.id)
+    unavailableVaults.add(item.id)
+    fetchConfig.mockClear()
+
+    await updatePluginProfile(item.id)
+
+    expect(pluginItems[item.id].status).toBe('active')
+    expect(pluginItems[item.id].lastUpdateErrorType).toBe('transient')
+    expect(pluginItems[item.id].failureCount).toBe(1)
+    expect(pluginItems[item.id].nextRetryAt).toBeGreaterThan(Date.now())
+    expect(fetchConfig).not.toHaveBeenCalled()
+  })
+
   it('backoff success clears failure state', async () => {
     const item = await installPlugin(file())
     await loginPlugin(item.id)
@@ -284,6 +342,15 @@ describe('updatePluginProfile', () => {
     const item = await installPlugin(file())
     await loginPlugin(item.id)
     delete vaults[item.id]
+    await updatePluginProfile(item.id)
+    expect(pluginItems[item.id].status).toBe('needs-reauth')
+  })
+
+  it('permanently invalid vault → needs-reauth', async () => {
+    const item = await installPlugin(file())
+    await loginPlugin(item.id)
+    invalidVaults.add(item.id)
+
     await updatePluginProfile(item.id)
     expect(pluginItems[item.id].status).toBe('needs-reauth')
   })
@@ -337,6 +404,17 @@ describe('updatePluginProfile', () => {
 })
 
 describe('auditPluginVault', () => {
+  it('checks material presence without decrypting an existing vault', async () => {
+    const item = await installPlugin(file())
+    await loginPlugin(item.id)
+    vi.mocked(readVaultMock).mockClear()
+
+    await auditPluginVault(item.id)
+
+    expect(readVaultMock).not.toHaveBeenCalled()
+    expect(pluginItems[item.id].status).toBe('active')
+  })
+
   it('marks an active plugin with a missing vault as needs-reauth', async () => {
     const item = await installPlugin(file())
     await loginPlugin(item.id)

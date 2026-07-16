@@ -89,7 +89,7 @@
     "cron-validator": "^1.4.0",
     "dayjs": "^1.11.21",
     "driver.js": "^1.4.0",
-    "electron": "^41.8.0",
+    "electron": "42.4.1",
     "electron-builder": "26.15.3",
     "electron-vite": "4.0.1",
     "electron-window-state": "^5.0.3",
@@ -124,7 +124,8 @@
     "types-pac": "^1.0.3",
     "typescript": "^5.9.3",
     "vite": "^7.3.5",
-    "vite-plugin-monaco-editor": "^1.1.0"
+    "vite-plugin-monaco-editor": "^1.1.0",
+    "vitest": "4.1.10"
   },
   "packageManager": "pnpm@10.27.0",
   "pnpm": {

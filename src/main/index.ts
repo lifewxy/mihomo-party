@@ -41,7 +41,7 @@ import {
   setupAppLifecycle,
   getSystemLanguage
 } from './lifecycle'
-import { configurePortableUserData } from './utils/dirs'
+import { configureAppPaths } from './utils/dirs'
 
 async function getWindowsPowerShellMajorVersion(): Promise<number | null> {
   // 仅 PS 3.0+ 写入 \3\ 键（\1\ 键恒为 2.0，不可用）。
@@ -86,7 +86,7 @@ async function ensureSupportedWindowsPowerShell(): Promise<boolean> {
   return false
 }
 
-configurePortableUserData()
+configureAppPaths()
 
 const mainLogger = createLogger('Main')
 
