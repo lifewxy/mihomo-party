@@ -83,7 +83,13 @@ const coreHookTimeout = 30000
 const automaticRestartDelay = 750
 
 // 核心进程状态
+interface CoreProcessWatchdog {
+  process: ChildProcess
+  corePid: number
+}
+
 let child: ChildProcess | null = null
+let coreProcessWatchdog: CoreProcessWatchdog | null = null
 let isRestarting = false
 let coreOperationPhase: 'initializing' | 'ready' | 'blocked' | 'shutting-down' = 'ready'
 let coreOperationTail: Promise<void> = Promise.resolve()
@@ -153,6 +159,60 @@ function runCoreOperation<T>(operation: () => Promise<T>): Promise<T> {
 function cancelAutomaticRestart(): void {
   automaticRestartController?.abort()
   automaticRestartController = null
+}
+
+function stopCoreProcessWatchdog(corePid?: number): void {
+  const watchdog = coreProcessWatchdog
+  if (!watchdog || (corePid !== undefined && watchdog.corePid !== corePid)) return
+
+  coreProcessWatchdog = null
+  if (watchdog.process.pid) {
+    try {
+      process.kill(-watchdog.process.pid, 'SIGKILL')
+    } catch {
+      // The watchdog has already exited.
+    }
+  }
+  watchdog.process.stdin?.destroy()
+}
+
+function startCoreProcessWatchdog(proc: ChildProcess, detached: boolean): void {
+  if (process.platform !== 'linux' || detached || !proc.pid) return
+
+  stopCoreProcessWatchdog()
+
+  const corePid = proc.pid
+  const watchdogProcess = spawn(
+    'sh',
+    ['-c', 'cat >/dev/null; kill -9 "$1" 2>/dev/null', 'mihomo-core-watchdog', `${corePid}`],
+    {
+      stdio: ['pipe', 'ignore', 'ignore'],
+      detached: true
+    }
+  )
+  coreProcessWatchdog = { process: watchdogProcess, corePid }
+
+  const watchdogStdin = watchdogProcess.stdin as typeof watchdogProcess.stdin & {
+    unref?: () => void
+  }
+  watchdogStdin.unref?.()
+  watchdogProcess.unref()
+
+  watchdogProcess.once('error', (error) => {
+    if (coreProcessWatchdog?.process === watchdogProcess) {
+      coreProcessWatchdog = null
+    }
+    watchdogProcess.stdin.destroy()
+    managerLogger.warn('Failed to start core process watchdog', error)
+  })
+  watchdogProcess.once('exit', (code, signal) => {
+    if (coreProcessWatchdog?.process !== watchdogProcess) return
+
+    coreProcessWatchdog = null
+    managerLogger.warn(
+      `Core process watchdog exited unexpectedly, code: ${code}, signal: ${signal}`
+    )
+  })
 }
 
 function shellQuote(value: string): string {
@@ -545,6 +605,7 @@ function setupCoreListeners(
 
   proc.on('close', async (code, signal) => {
     managerLogger.info(`Core closed, code: ${code}, signal: ${signal}`)
+    stopCoreProcessWatchdog(proc.pid)
 
     if (child === proc) {
       child = null
@@ -674,6 +735,7 @@ async function startCoreInternal(detached = false, skipStop = false): Promise<Co
   const proc = spawnCoreProcess(config)
   hookWaiter?.attachProcess(proc)
   child = proc
+  startCoreProcessWatchdog(proc, detached)
 
   if (detached) {
     managerLogger.info(
@@ -750,6 +812,8 @@ function stopCoreProcessAndStreams(cancelStartup = true): void {
     child.kill('SIGINT')
     child = null
   }
+
+  stopCoreProcessWatchdog()
 
   stopMihomoTraffic()
   stopMihomoConnections()
