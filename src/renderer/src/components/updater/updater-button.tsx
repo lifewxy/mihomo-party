@@ -54,7 +54,7 @@ const UpdaterButton: React.FC<Props> = (props) => {
         </Button>
       ) : (
         <Button
-          className={`fixed left-[85px] app-nodrag ${!useWindowFrame && platform === 'darwin' ? 'ml-[60px]' : ''}`}
+          className={`fixed left-21.25 app-nodrag ${!useWindowFrame && platform === 'darwin' ? 'ml-15' : ''}`}
           color="danger"
           size="sm"
           onPress={() => {
